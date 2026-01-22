@@ -1,0 +1,459 @@
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, status, BackgroundTasks
+from sqlalchemy.orm import Session
+from minio import Minio
+from minio.error import S3Error
+from database import get_db
+from config import settings
+from schemas import PDFUploadResponse, PDFDocumentResponse
+import crud
+from datetime import datetime, timedelta
+import io
+import logging
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# Import services
+from services.pdf_processor import PDFProcessor
+from services.text_chunker import TextChunker
+from services.embeddings import EmbeddingGenerator
+from services.milvus_service import MilvusService
+
+router = APIRouter(prefix="/api/pdf", tags=["PDF"])
+
+# Initialize MinIO client
+minio_client = Minio(
+    settings.MINIO_ENDPOINT,
+    access_key=settings.MINIO_ACCESS_KEY,
+    secret_key=settings.MINIO_SECRET_KEY,
+    secure=settings.MINIO_USE_SSL
+)
+
+# Ensure bucket exists
+def ensure_bucket_exists():
+    """Create bucket if it doesn't exist"""
+    try:
+        if not minio_client.bucket_exists(settings.MINIO_BUCKET_NAME):
+            minio_client.make_bucket(settings.MINIO_BUCKET_NAME)
+    except S3Error as e:
+        print(f"Error creating bucket: {e}")
+
+ensure_bucket_exists()
+
+
+def process_pdf_async(pdf_id: int, file_content: bytes, filename: str, db_session):
+    """
+    Async task: Extract text, chunk with streaming, generate embeddings incrementally, and store in Milvus
+    Chunks are sent for embedding as soon as they are created, not waiting for all chunks to be ready
+    """
+    db = db_session
+    total_chunks_processed = 0
+    total_embeddings_inserted = 0
+    
+    try:
+        logger.info(f"[PDF {pdf_id}] Starting PDF processing for: {filename}")
+        
+        # Update status to processing
+        crud.update_pdf_processing_status(db, pdf_id, 1, "Extracting text from PDF...")
+        logger.info(f"[PDF {pdf_id}] Extracting text from PDF...")
+        
+        # Step 1: Extract text from PDF
+        pdf_processor = PDFProcessor()
+        pages_data = pdf_processor.extract_text_with_pages(file_content)
+        logger.info(f"[PDF {pdf_id}] Extracted {len(pages_data)} pages from PDF")
+        
+        if not pages_data:
+            error_msg = "Failed: No text could be extracted from PDF"
+            logger.error(f"[PDF {pdf_id}] {error_msg}")
+            crud.update_pdf_processing_status(db, pdf_id, -1, error_msg)
+            return
+        
+        # Step 2: Initialize Milvus and create collection BEFORE chunking
+        crud.update_pdf_processing_status(db, pdf_id, 1, "Initializing Milvus collection...")
+        logger.info(f"[PDF {pdf_id}] Initializing Milvus at {settings.MILVUS_HOST}:{settings.MILVUS_PORT}")
+        
+        try:
+            milvus_service = MilvusService(
+                host=settings.MILVUS_HOST,
+                port=settings.MILVUS_PORT,
+                collection_name=settings.MILVUS_COLLECTION_NAME
+            )
+            logger.info(f"[PDF {pdf_id}] Connected to Milvus")
+        except Exception as e:
+            error_msg = f"Failed to connect to Milvus: {str(e)}"
+            logger.error(f"[PDF {pdf_id}] {error_msg}")
+            crud.update_pdf_processing_status(db, pdf_id, -1, error_msg)
+            return
+        
+        # Create collection and initialize embedding generator
+        embedding_generator = EmbeddingGenerator(
+            model_name=settings.EMBEDDING_MODEL,
+            huggingface_token=settings.HUGGINGFACE_TOKEN if settings.HUGGINGFACE_TOKEN else None
+        )
+        embedding_dim = embedding_generator.get_embedding_dimension()
+        logger.info(f"[PDF {pdf_id}] Creating/verifying collection with embedding dimension: {embedding_dim}")
+        
+        try:
+            milvus_service.create_collection(embedding_dim=embedding_dim)
+            logger.info(f"[PDF {pdf_id}] Milvus collection ready: {settings.MILVUS_COLLECTION_NAME}")
+        except Exception as e:
+            error_msg = f"Failed to create Milvus collection: {str(e)}"
+            logger.error(f"[PDF {pdf_id}] {error_msg}")
+            crud.update_pdf_processing_status(db, pdf_id, -1, error_msg)
+            return
+        
+        # Step 3: Stream chunks, generate embeddings, and insert into Milvus incrementally
+        crud.update_pdf_processing_status(db, pdf_id, 1, "Chunking text and generating embeddings...")
+        logger.info(f"[PDF {pdf_id}] Starting streaming chunk processing with incremental embedding generation...")
+        
+        text_chunker = TextChunker(
+            chunk_size=settings.CHUNK_SIZE,
+            chunk_overlap=settings.CHUNK_OVERLAP
+        )
+        
+        # Process chunks in batches for better embedding performance
+        batch_size = 5  # Number of chunks to process together before inserting
+        chunk_batch = []
+        
+        try:
+            # Use the streaming chunk generator to process chunks as they're created
+            logger.info(f"[PDF {pdf_id}] Creating streaming generator for {len(pages_data)} pages...")
+            chunk_generator = text_chunker.chunk_documents_streaming(pages_data)
+            logger.info(f"[PDF {pdf_id}] Generator created, starting to iterate through chunks...")
+            
+            chunk_count = 0
+            for chunk in chunk_generator:
+                chunk_count += 1
+                logger.info(f"[PDF {pdf_id}] ✓ Chunk #{chunk_count} created (global_index: {chunk['global_chunk_index']}, page: {chunk['page_number']}, size: {len(chunk['text'])} chars)")
+                chunk_batch.append(chunk)
+                
+                # When batch is full or this is the last chunk, process and insert
+                if len(chunk_batch) >= batch_size:
+                    logger.info(f"[PDF {pdf_id}] 🔄 Processing batch of {len(chunk_batch)} chunks (batch starts at chunk #{chunk_count - len(chunk_batch) + 1})...")
+                    
+                    # Generate embeddings for this batch
+                    chunk_texts = [c['text'] for c in chunk_batch]
+                    try:
+                        logger.info(f"[PDF {pdf_id}] 🧠 Generating embeddings for {len(chunk_texts)} texts...")
+                        embeddings = embedding_generator.generate_embedding_for_batch(chunk_texts, batch_size=8)
+                        logger.info(f"[PDF {pdf_id}] 🧠 Generated {len(embeddings)} embeddings successfully")
+                    except Exception as e:
+                        error_msg = f"Failed to generate embeddings for batch: {str(e)}"
+                        logger.error(f"[PDF {pdf_id}] {error_msg}")
+                        crud.update_pdf_processing_status(db, pdf_id, -1, error_msg)
+                        return
+                    
+                    # Prepare data for insertion
+                    embeddings_data = []
+                    for i, chunk in enumerate(chunk_batch):
+                        embeddings_data.append({
+                            'embedding': embeddings[i],
+                            'text_chunk': chunk['text'],
+                            'document_name': filename,
+                            'page_number': chunk['page_number'],
+                            'chunk_index': chunk['global_chunk_index'],
+                            'token_count': chunk['token_count'],
+                        })
+                    
+                    # Insert batch into Milvus
+                    try:
+                        logger.info(f"[PDF {pdf_id}] 💾 Inserting {len(embeddings_data)} embeddings into Milvus...")
+                        inserted_count = milvus_service.insert_embeddings(embeddings_data)
+                        total_embeddings_inserted += inserted_count
+                        total_chunks_processed += len(chunk_batch)
+                        logger.info(f"[PDF {pdf_id}] ✅ Inserted {inserted_count} embeddings into Milvus (Total processed: {total_chunks_processed} chunks, {total_embeddings_inserted} embeddings)")
+                    except Exception as e:
+                        error_msg = f"Failed to insert embeddings into Milvus: {str(e)}"
+                        logger.error(f"[PDF {pdf_id}] {error_msg}")
+                        crud.update_pdf_processing_status(db, pdf_id, -1, error_msg)
+                        return
+                    
+                    # Update status with progress
+                    crud.update_pdf_processing_status(db, pdf_id, 1, f"Processed {total_chunks_processed} chunks, inserted {total_embeddings_inserted} embeddings...")
+                    
+                    # Clear batch for next round
+                    chunk_batch = []
+            
+            logger.info(f"[PDF {pdf_id}] Generator iteration complete. Total chunks created: {chunk_count}")
+            
+            # Process any remaining chunks in the final batch
+            if chunk_batch:
+                logger.info(f"[PDF {pdf_id}] Processing final batch of {len(chunk_batch)} chunks...")
+                
+                chunk_texts = [c['text'] for c in chunk_batch]
+                try:
+                    logger.info(f"[PDF {pdf_id}] 🧠 Generating embeddings for final batch ({len(chunk_texts)} texts)...")
+                    embeddings = embedding_generator.generate_embedding_for_batch(chunk_texts, batch_size=8)
+                    logger.info(f"[PDF {pdf_id}] 🧠 Generated {len(embeddings)} embeddings for final batch")
+                except Exception as e:
+                    error_msg = f"Failed to generate embeddings for final batch: {str(e)}"
+                    logger.error(f"[PDF {pdf_id}] {error_msg}")
+                    crud.update_pdf_processing_status(db, pdf_id, -1, error_msg)
+                    return
+                
+                embeddings_data = []
+                for i, chunk in enumerate(chunk_batch):
+                    embeddings_data.append({
+                        'embedding': embeddings[i],
+                        'text_chunk': chunk['text'],
+                        'document_name': filename,
+                        'page_number': chunk['page_number'],
+                        'chunk_index': chunk['global_chunk_index'],
+                        'token_count': chunk['token_count'],
+                    })
+                
+                try:
+                    logger.info(f"[PDF {pdf_id}] 💾 Inserting final batch of {len(embeddings_data)} embeddings into Milvus...")
+                    inserted_count = milvus_service.insert_embeddings(embeddings_data)
+                    total_embeddings_inserted += inserted_count
+                    total_chunks_processed += len(chunk_batch)
+                    logger.info(f"[PDF {pdf_id}] ✅ Inserted {inserted_count} embeddings into Milvus (Final total: {total_chunks_processed} chunks, {total_embeddings_inserted} embeddings)")
+                except Exception as e:
+                    error_msg = f"Failed to insert embeddings into Milvus: {str(e)}"
+                    logger.error(f"[PDF {pdf_id}] {error_msg}")
+                    crud.update_pdf_processing_status(db, pdf_id, -1, error_msg)
+                    return
+        
+        except Exception as e:
+            error_msg = f"Error during streaming chunk processing: {str(e)}"
+            logger.error(f"[PDF {pdf_id}] ❌ {error_msg}", exc_info=True)
+            crud.update_pdf_processing_status(db, pdf_id, -1, error_msg)
+            return
+        
+        # Step 4: Update PDF processing status to completed
+        crud.update_pdf_processing_status(
+            db, pdf_id, 2,
+            f"Processing completed successfully",
+            chunk_count=total_chunks_processed,
+            embedding_count=total_embeddings_inserted
+        )
+        
+        logger.info(f"[PDF {pdf_id}] ✅ PDF processing completed successfully")
+        logger.info(f"[PDF {pdf_id}] Summary: {total_chunks_processed} chunks, {total_embeddings_inserted} embeddings stored in Milvus collection '{settings.MILVUS_COLLECTION_NAME}'")
+        
+    except Exception as e:
+        error_msg = f"Processing failed: {str(e)}"
+        logger.error(f"[PDF {pdf_id}] ❌ {error_msg}", exc_info=True)
+        crud.update_pdf_processing_status(db, pdf_id, -1, error_msg)
+    finally:
+        db.close()
+
+
+@router.post("/upload", response_model=PDFUploadResponse, status_code=status.HTTP_201_CREATED)
+async def upload_pdf(
+    file: UploadFile = File(...),
+    description: str = Form(None),
+    background_tasks: BackgroundTasks = BackgroundTasks(),
+    db: Session = Depends(get_db)
+):
+    """
+    Upload a PDF file to MinIO and store metadata in PostgreSQL
+    Text extraction and embedding generation happens in background
+    
+    - **file**: The PDF file to upload (required)
+    - **description**: Optional description of the PDF
+    """
+    
+    # Validate file type
+    if not file.filename.endswith('.pdf'):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Only PDF files are allowed"
+        )
+    
+    try:
+        # Read file content
+        file_content = await file.read()
+        file_size = len(file_content)
+        
+        # Create MinIO path
+        timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S_")
+        minio_path = f"{settings.MINIO_BUCKET_NAME}/{timestamp}{file.filename}"
+        
+        # Check if file already exists in database
+        if crud.pdf_exists_by_path(db, minio_path):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="A file with this name was recently uploaded. Please try again or use a different filename."
+            )
+        
+        # Upload to MinIO
+        file_stream = io.BytesIO(file_content)
+        minio_client.put_object(
+            settings.MINIO_BUCKET_NAME,
+            f"{timestamp}{file.filename}",
+            file_stream,
+            file_size,
+            content_type="application/pdf"
+        )
+        
+        # Store metadata in PostgreSQL
+        pdf_doc = crud.create_pdf_document(
+            db=db,
+            filename=file.filename,
+            minio_path=minio_path,
+            file_size=file_size,
+            description=description
+        )
+        
+        # Set initial processing status to pending
+        crud.update_pdf_processing_status(db, pdf_doc.id, 0, "Pending processing")
+        
+        # Add background task to process PDF
+        background_tasks.add_task(
+            process_pdf_async,
+            pdf_doc.id,
+            file_content,
+            file.filename,
+            db
+        )
+        
+        return PDFUploadResponse(
+            success=True,
+            message=f"PDF '{file.filename}' uploaded successfully. Processing started in background.",
+            pdf=PDFDocumentResponse.model_validate(pdf_doc.to_dict())
+        )
+        
+    except HTTPException:
+        raise
+    except S3Error as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error uploading to MinIO: {str(e)}"
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error uploading PDF: {str(e)}"
+        )
+
+
+@router.get("/documents", response_model=list[PDFDocumentResponse])
+async def get_all_pdfs(db: Session = Depends(get_db)):
+    """
+    Get all uploaded PDF documents
+    """
+    pdfs = crud.get_all_pdfs(db)
+    return [PDFDocumentResponse.model_validate(pdf.to_dict()) for pdf in pdfs]
+
+
+@router.get("/documents/{pdf_id}", response_model=PDFDocumentResponse)
+async def get_pdf(pdf_id: int, db: Session = Depends(get_db)):
+    """
+    Get a specific PDF document by ID
+    """
+    pdf = crud.get_pdf_by_id(db, pdf_id)
+    if not pdf:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="PDF document not found"
+        )
+    return PDFDocumentResponse.model_validate(pdf.to_dict())
+
+
+@router.delete("/documents/{pdf_id}", status_code=status.HTTP_200_OK)
+async def delete_pdf(pdf_id: int, db: Session = Depends(get_db)):
+    """
+    Delete a PDF document from MinIO and database
+    """
+    pdf = crud.get_pdf_by_id(db, pdf_id)
+    if not pdf:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="PDF document not found"
+        )
+    
+    try:
+        # Extract filename from minio_path (e.g., "pdf/20240121_120000_document.pdf" -> "20240121_120000_document.pdf")
+        minio_filename = pdf.minio_path.split('/')[-1]
+        
+        # Delete from MinIO
+        minio_client.remove_object(settings.MINIO_BUCKET_NAME, minio_filename)
+        
+        # Delete from database
+        crud.delete_pdf(db, pdf_id)
+        
+        return {
+            "success": True,
+            "message": f"PDF '{pdf.filename}' deleted successfully"
+        }
+        
+    except S3Error as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error deleting from MinIO: {str(e)}"
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error deleting PDF: {str(e)}"
+        )
+
+
+@router.get("/documents/{pdf_id}/download")
+async def download_pdf(pdf_id: int, db: Session = Depends(get_db)):
+    """
+    Get download link for a PDF document
+    """
+    pdf = crud.get_pdf_by_id(db, pdf_id)
+    if not pdf:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="PDF document not found"
+        )
+    
+    try:
+        # Extract filename from minio_path
+        minio_filename = pdf.minio_path.split('/')[-1]
+        
+        # Generate presigned URL for download (valid for 7 days)
+        url = minio_client.get_presigned_url(
+            "GET",
+            settings.MINIO_BUCKET_NAME,
+            minio_filename,
+            expires=timedelta(days=7)
+        )
+        
+        return {
+            "success": True,
+            "download_url": url,
+            "filename": pdf.filename
+        }
+        
+    except S3Error as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error generating download link: {str(e)}"
+        )
+
+
+@router.get("/documents/{pdf_id}/processing-status")
+async def get_processing_status(pdf_id: int, db: Session = Depends(get_db)):
+    """
+    Get processing status of a PDF document
+    """
+    pdf = crud.get_pdf_by_id(db, pdf_id)
+    if not pdf:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="PDF document not found"
+        )
+    
+    status_map = {
+        0: "pending",
+        1: "processing",
+        2: "completed",
+        -1: "failed"
+    }
+    
+    return {
+        "pdf_id": pdf.id,
+        "filename": pdf.filename,
+        "status": status_map.get(pdf.is_processed, "unknown"),
+        "status_code": pdf.is_processed,
+        "message": pdf.processing_status,
+        "chunk_count": pdf.chunk_count,
+        "embedding_count": pdf.embedding_count,
+        "processed_at": pdf.processed_at.isoformat() if pdf.processed_at else None
+    }
