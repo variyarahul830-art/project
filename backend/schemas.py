@@ -1,5 +1,6 @@
 from pydantic import BaseModel, Field
 from typing import Optional, List
+from datetime import datetime
 
 # Workflow Schemas
 class WorkflowBase(BaseModel):
@@ -113,3 +114,33 @@ class PDFUploadResponse(BaseModel):
     message: str
     pdf: Optional[PDFDocumentResponse] = None
     error: Optional[str] = None
+# FAQ Schemas
+class FAQBase(BaseModel):
+    """Base FAQ schema"""
+    question: str = Field(..., min_length=1, description="FAQ question")
+    answer: str = Field(..., min_length=1, description="FAQ answer")
+    category: Optional[str] = Field(None, description="FAQ category")
+
+class FAQCreate(FAQBase):
+    """Schema for creating an FAQ"""
+    pass
+
+class FAQUpdate(BaseModel):
+    """Schema for updating an FAQ"""
+    question: Optional[str] = None
+    answer: Optional[str] = None
+    category: Optional[str] = None
+
+class FAQResponse(FAQBase):
+    """Schema for FAQ response"""
+    id: int
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+    
+    class Config:
+        from_attributes = True
+
+class ChatRequest(BaseModel):
+    """Schema for chat request"""
+    question: str
+    workflow_id: Optional[int] = None

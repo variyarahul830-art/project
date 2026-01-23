@@ -104,7 +104,38 @@ async def chat(request: ChatRequest, db: Session = Depends(get_db)):
             else:
                 logger.info("Partial match found source nodes, but they have no target connections")
         
-        logger.info("No nodes found in knowledge graph, trying RAG approach with PDF embeddings")
+        # Step 2: Try to find answer in FAQs
+        logger.info("Step 3: Searching FAQs...")
+        faq_exact = crud.search_faq_by_question(db, request.question)
+        
+        if faq_exact:
+            logger.info(f"✅ Found exact FAQ match")
+            return {
+                "success": True,
+                "question": request.question,
+                "answer": faq_exact.answer,
+                "source": "faq",
+                "faq_id": faq_exact.id,
+                "category": faq_exact.category
+            }
+        
+        # Try partial FAQ match
+        faq_partial = crud.search_faq_partial(db, request.question)
+        if faq_partial:
+            logger.info(f"✅ Found {len(faq_partial)} partial FAQ matches")
+            # Return the first (most relevant) partial match
+            best_faq = faq_partial[0]
+            return {
+                "success": True,
+                "question": request.question,
+                "answer": best_faq.answer,
+                "source": "faq",
+                "faq_id": best_faq.id,
+                "category": best_faq.category,
+                "match_type": "partial"
+            }
+        
+        logger.info("No FAQs found, trying RAG approach with PDF embeddings")
         
         # Step 2: If not found in knowledge graph, use RAG approach
         # Generate embedding for the question

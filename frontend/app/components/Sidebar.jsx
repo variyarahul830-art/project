@@ -37,6 +37,15 @@ export default function Sidebar({ activeMode, onModeChange }) {
           <span className="icon">📄</span>
           <span className="label">Documents</span>
         </button>
+
+        <button
+          onClick={() => onModeChange('faq')}
+          className={`nav-btn ${activeMode === 'faq' ? 'active' : ''}`}
+          title="Manage FAQs"
+        >
+          <span className="icon">📚</span>
+          <span className="label">FAQs</span>
+        </button>
       </nav>
 
       <style jsx>{`

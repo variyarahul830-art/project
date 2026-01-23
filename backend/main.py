@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from config import settings
 from database import engine, Base
-from models import Node, Edge, PDFDocument, Workflow
+from models import Node, Edge, PDFDocument, Workflow, FAQ
 
 # Create database tables
 Base.metadata.create_all(bind=engine)
@@ -24,7 +24,7 @@ app.add_middleware(
 )
 
 # Import routes after app initialization to avoid circular imports
-from routes import graph, chat, pdf, workflows
+from routes import graph, chat, pdf, workflows, faq
 
 # Include routers
 app.include_router(workflows.router)
@@ -33,7 +33,10 @@ app.include_router(graph.router)
 
 app.include_router(chat.router)
 
-app.include_router(pdf.router)
+app.include_router(pdf
+                   .router)
+
+app.include_router(faq.router)
 
 @app.get("/health")
 async def health_check():

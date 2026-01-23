@@ -1,6 +1,6 @@
 from sqlalchemy.orm import Session
 from sqlalchemy import func
-from models import Node, Edge, PDFDocument, Workflow
+from models import Node, Edge, PDFDocument, Workflow, FAQ
 from schemas import NodeCreate, EdgeCreate, WorkflowCreate
 from datetime import datetime
 import json
@@ -251,3 +251,72 @@ def update_pdf_processing_status(db: Session, pdf_id: int, status: int, status_m
         db.refresh(pdf)
     
     return pdf
+
+
+# FAQ CRUD Operations
+
+def create_faq(db: Session, question: str, answer: str, category: str = None) -> FAQ:
+    """Create a new FAQ"""
+    db_faq = FAQ(
+        question=question.strip(),
+        answer=answer.strip(),
+        category=category.strip() if category else None
+    )
+    db.add(db_faq)
+    db.commit()
+    db.refresh(db_faq)
+    return db_faq
+
+def get_faq_by_id(db: Session, faq_id: int) -> FAQ:
+    """Get FAQ by ID"""
+    return db.query(FAQ).filter(FAQ.id == faq_id).first()
+
+def get_all_faqs(db: Session, category: str = None) -> list:
+    """Get all FAQs, optionally filtered by category"""
+    query = db.query(FAQ)
+    if category:
+        query = query.filter(FAQ.category == category)
+    return query.order_by(FAQ.created_at.desc()).all()
+
+def search_faq_by_question(db: Session, question_text: str) -> FAQ:
+    """Search for FAQ by exact question match (case-insensitive)"""
+    normalized_question = question_text.strip().lower()
+    return db.query(FAQ).filter(
+        func.lower(FAQ.question) == normalized_question
+    ).first()
+
+def search_faq_partial(db: Session, question_text: str) -> list:
+    """Search for FAQs by partial question match (case-insensitive)"""
+    search_term = f"%{question_text.strip().lower()}%"
+    return db.query(FAQ).filter(
+        func.lower(FAQ.question).ilike(search_term)
+    ).all()
+
+def update_faq(db: Session, faq_id: int, question: str = None, answer: str = None, category: str = None) -> FAQ:
+    """Update an FAQ"""
+    faq = db.query(FAQ).filter(FAQ.id == faq_id).first()
+    if faq:
+        if question:
+            faq.question = question.strip()
+        if answer:
+            faq.answer = answer.strip()
+        if category:
+            faq.category = category.strip()
+        faq.updated_at = datetime.utcnow()
+        db.commit()
+        db.refresh(faq)
+    return faq
+
+def delete_faq(db: Session, faq_id: int) -> bool:
+    """Delete an FAQ"""
+    faq = db.query(FAQ).filter(FAQ.id == faq_id).first()
+    if faq:
+        db.delete(faq)
+        db.commit()
+        return True
+    return False
+
+def get_faq_categories(db: Session) -> list:
+    """Get all unique FAQ categories"""
+    categories = db.query(FAQ.category).distinct().filter(FAQ.category != None).all()
+    return [cat[0] for cat in categories]

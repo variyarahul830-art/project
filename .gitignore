@@ -18,6 +18,7 @@ backend/migrations
 backend/*.egg-info
 backend/dist
 backend/build
+volumes/*
 
 # IDE
 .vscode

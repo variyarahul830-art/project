@@ -92,9 +92,13 @@ class EmbeddingGenerator:
             embeddings = np.asarray(embeddings, dtype=np.float32)
             logger.info(f"✅ Successfully generated {len(embeddings)} embeddings")
             
-            # Ensure output is a list of arrays
+            # Always return list of individual embeddings
             if len(texts) == 1:
-                return [embeddings]
+                # Ensure single embedding is 1D vector, not 2D
+                if embeddings.ndim == 2:
+                    return [embeddings[0]]
+                else:
+                    return [embeddings]
             return [np.asarray(emb, dtype=np.float32) for emb in embeddings]
         except Exception as e:
             logger.error(f"❌ Error generating embeddings: {str(e)}")
@@ -131,8 +135,13 @@ class EmbeddingGenerator:
             embeddings = np.asarray(embeddings, dtype=np.float32)
             logger.info(f"✅ Successfully generated {len(embeddings)} embeddings")
             
+            # Always return list of individual embeddings, even if single text
             if len(texts) == 1:
-                return [embeddings]
+                # Ensure single embedding is 1D vector, not 2D
+                if embeddings.ndim == 2:
+                    return [embeddings[0]]
+                else:
+                    return [embeddings]
             return [np.asarray(emb, dtype=np.float32) for emb in embeddings]
         except Exception as e:
             logger.error(f"❌ Error generating embeddings: {str(e)}")

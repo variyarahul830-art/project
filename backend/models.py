@@ -110,3 +110,27 @@ class PDFDocument(Base):
             'processed_at': self.processed_at.isoformat() if self.processed_at else None,
         }
 
+
+class FAQ(Base):
+    """FAQ - Frequently Asked Questions"""
+    
+    __tablename__ = "faqs"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    question = Column(Text, nullable=False, index=True)
+    answer = Column(Text, nullable=False)
+    category = Column(String(255), nullable=True, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    
+    def to_dict(self):
+        """Convert model to dictionary"""
+        return {
+            'id': self.id,
+            'question': self.question,
+            'answer': self.answer,
+            'category': self.category,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+            'updated_at': self.updated_at.isoformat() if self.updated_at else None,
+        }
+

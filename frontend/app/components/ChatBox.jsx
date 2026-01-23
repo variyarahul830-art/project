@@ -26,8 +26,25 @@ export default function ChatBox({ workflowId }) {
       // Send message to backend
       const response = await sendDirectChatMessage(messageText);
 
-      // Add bot response to chat
-      const botText = response.message || response.answer || "I couldn't find a response. Please try another question.";
+      // Determine bot response text based on source and success status
+      let botText = '';
+      
+      if (response.success === false) {
+        // Failed response with error message
+        botText = response.message || response.answer || "I couldn't find a response. Please try another question.";
+      } else if (response.source === 'knowledge_graph' && response.answers && response.answers.length > 0) {
+        // Knowledge graph match with target nodes - only show the target nodes, no message
+        botText = '';
+      } else if (response.source === 'faq') {
+        // FAQ match
+        botText = response.answer || response.message || "FAQ answer not available.";
+      } else if (response.source === 'rag') {
+        // RAG response from documents
+        botText = response.answer || response.message || "I couldn't find relevant information in documents.";
+      } else {
+        // Default fallback
+        botText = response.message || response.answer || "I couldn't find a response. Please try another question.";
+      }
 
       const botMessage = {
         type: 'bot',

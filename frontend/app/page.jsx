@@ -5,6 +5,7 @@ import Sidebar from './components/Sidebar';
 import ChatBox from './components/ChatBox';
 import GraphBuilderWrapper from './components/GraphBuilderWrapper';
 import PDFUpload from './components/PDFUpload';
+import FAQManagement from './components/FAQManagement';
 
 export default function Home() {
   const [activeMode, setActiveMode] = useState('chat');
@@ -18,6 +19,7 @@ export default function Home() {
         {activeMode === 'chat' && <ChatBox workflowId={currentWorkflowId} />}
         {activeMode === 'builder' && <GraphBuilderWrapper workflowId={currentWorkflowId} onWorkflowChange={setCurrentWorkflowId} />}
         {activeMode === 'pdf' && <PDFUpload />}
+        {activeMode === 'faq' && <FAQManagement />}
       </main>
 
       <style jsx global>{`
