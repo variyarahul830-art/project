@@ -5,6 +5,7 @@ Provides utility functions to query Hasura GraphQL API
 
 import httpx
 import logging
+from datetime import datetime
 from config import settings
 
 logger = logging.getLogger(__name__)
@@ -295,3 +296,158 @@ async def delete_faq(faq_id: int):
     """
     result = await hasura.execute(query, {"id": faq_id})
     return result["delete_faqs_by_pk"]
+
+
+# ==================== PDF DOCUMENTS ====================
+
+
+async def pdf_exists_by_path(minio_path: str) -> bool:
+    """Check if a PDF document exists by its MinIO path"""
+    query = """
+    query PdfExists($minio_path: String!) {
+        pdf_documents(where: {minio_path: {_eq: $minio_path}}, limit: 1) {
+            id
+        }
+    }
+    """
+    result = await hasura.execute(query, {"minio_path": minio_path})
+    return bool(result.get("pdf_documents"))
+
+
+async def create_pdf_document(
+    filename: str,
+    minio_path: str,
+    file_size: int,
+    description: str | None = None,
+    processing_status: str | None = None,
+    is_processed: int | None = None,
+):
+    """Create a new PDF document record"""
+    mutation = """
+    mutation CreatePdf($object: pdf_documents_insert_input!) {
+        insert_pdf_documents_one(object: $object) {
+            id
+            filename
+            minio_path
+            file_size
+            upload_date
+            description
+            is_processed
+            processing_status
+            chunk_count
+            embedding_count
+            processed_at
+        }
+    }
+    """
+
+    payload = {
+        "filename": filename,
+        "minio_path": minio_path,
+        "file_size": file_size,
+    }
+
+    if description is not None:
+        payload["description"] = description
+    if processing_status is not None:
+        payload["processing_status"] = processing_status
+    if is_processed is not None:
+        payload["is_processed"] = is_processed
+
+    result = await hasura.execute(mutation, {"object": payload})
+    return result["insert_pdf_documents_one"]
+
+
+async def get_pdf_by_id(pdf_id: int):
+    """Fetch a single PDF document by ID"""
+    query = """
+    query GetPdf($id: Int!) {
+        pdf_documents_by_pk(id: $id) {
+            id
+            filename
+            minio_path
+            file_size
+            upload_date
+            description
+            is_processed
+            processing_status
+            chunk_count
+            embedding_count
+            processed_at
+        }
+    }
+    """
+    result = await hasura.execute(query, {"id": pdf_id})
+    return result.get("pdf_documents_by_pk")
+
+
+async def get_all_pdfs():
+    """Fetch all PDF documents ordered by upload date"""
+    query = """
+    query GetPdfs {
+        pdf_documents(order_by: {upload_date: desc}) {
+            id
+            filename
+            minio_path
+            file_size
+            upload_date
+            description
+            is_processed
+            processing_status
+            chunk_count
+            embedding_count
+            processed_at
+        }
+    }
+    """
+    result = await hasura.execute(query)
+    return result.get("pdf_documents", [])
+
+
+async def delete_pdf(pdf_id: int):
+    """Delete a PDF document record"""
+    mutation = """
+    mutation DeletePdf($id: Int!) {
+        delete_pdf_documents_by_pk(id: $id) {
+            id
+        }
+    }
+    """
+    result = await hasura.execute(mutation, {"id": pdf_id})
+    return result.get("delete_pdf_documents_by_pk")
+
+
+async def update_pdf_processing_status(
+    pdf_id: int,
+    status: int,
+    status_message: str | None = None,
+    chunk_count: int | None = None,
+    embedding_count: int | None = None,
+):
+    """Update PDF processing status and optional counters"""
+    update_fields: dict[str, object] = {"is_processed": status}
+
+    if status_message is not None:
+        update_fields["processing_status"] = status_message
+    if chunk_count is not None:
+        update_fields["chunk_count"] = chunk_count
+    if embedding_count is not None:
+        update_fields["embedding_count"] = embedding_count
+    if status == 2:
+        update_fields["processed_at"] = datetime.utcnow().isoformat()
+
+    mutation = """
+    mutation UpdatePdfStatus($id: Int!, $set: pdf_documents_set_input!) {
+        update_pdf_documents_by_pk(pk_columns: {id: $id}, _set: $set) {
+            id
+            is_processed
+            processing_status
+            chunk_count
+            embedding_count
+            processed_at
+        }
+    }
+    """
+
+    result = await hasura.execute(mutation, {"id": pdf_id, "set": update_fields})
+    return result.get("update_pdf_documents_by_pk")

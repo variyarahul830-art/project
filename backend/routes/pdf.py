@@ -1,14 +1,12 @@
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, status, BackgroundTasks
-from sqlalchemy.orm import Session
+from fastapi import APIRouter, HTTPException, UploadFile, File, Form, status, BackgroundTasks
 from minio import Minio
 from minio.error import S3Error
-from database import get_db
 from config import settings
 from schemas import PDFUploadResponse, PDFDocumentResponse
-import crud
 from datetime import datetime, timedelta
 import io
 import logging
+from services import hasura_client
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -42,20 +40,19 @@ def ensure_bucket_exists():
 ensure_bucket_exists()
 
 
-def process_pdf_async(pdf_id: int, file_content: bytes, filename: str, db_session):
+async def process_pdf_async(pdf_id: int, file_content: bytes, filename: str):
     """
     Async task: Extract text, chunk with streaming, generate embeddings incrementally, and store in Milvus
     Chunks are sent for embedding as soon as they are created, not waiting for all chunks to be ready
     """
-    db = db_session
     total_chunks_processed = 0
     total_embeddings_inserted = 0
-    
+
     try:
         logger.info(f"[PDF {pdf_id}] Starting PDF processing for: {filename}")
-        
+
         # Update status to processing
-        crud.update_pdf_processing_status(db, pdf_id, 1, "Extracting text from PDF...")
+        await hasura_client.update_pdf_processing_status(pdf_id, 1, "Extracting text from PDF...")
         logger.info(f"[PDF {pdf_id}] Extracting text from PDF...")
         
         # Step 1: Extract text from PDF
@@ -66,11 +63,11 @@ def process_pdf_async(pdf_id: int, file_content: bytes, filename: str, db_sessio
         if not pages_data:
             error_msg = "Failed: No text could be extracted from PDF"
             logger.error(f"[PDF {pdf_id}] {error_msg}")
-            crud.update_pdf_processing_status(db, pdf_id, -1, error_msg)
+            await hasura_client.update_pdf_processing_status(pdf_id, -1, error_msg)
             return
         
         # Step 2: Initialize Milvus and create collection BEFORE chunking
-        crud.update_pdf_processing_status(db, pdf_id, 1, "Initializing Milvus collection...")
+        await hasura_client.update_pdf_processing_status(pdf_id, 1, "Initializing Milvus collection...")
         logger.info(f"[PDF {pdf_id}] Initializing Milvus at {settings.MILVUS_HOST}:{settings.MILVUS_PORT}")
         
         try:
@@ -83,7 +80,7 @@ def process_pdf_async(pdf_id: int, file_content: bytes, filename: str, db_sessio
         except Exception as e:
             error_msg = f"Failed to connect to Milvus: {str(e)}"
             logger.error(f"[PDF {pdf_id}] {error_msg}")
-            crud.update_pdf_processing_status(db, pdf_id, -1, error_msg)
+            await hasura_client.update_pdf_processing_status(pdf_id, -1, error_msg)
             return
         
         # Create collection and initialize embedding generator
@@ -100,11 +97,11 @@ def process_pdf_async(pdf_id: int, file_content: bytes, filename: str, db_sessio
         except Exception as e:
             error_msg = f"Failed to create Milvus collection: {str(e)}"
             logger.error(f"[PDF {pdf_id}] {error_msg}")
-            crud.update_pdf_processing_status(db, pdf_id, -1, error_msg)
+            await hasura_client.update_pdf_processing_status(pdf_id, -1, error_msg)
             return
         
         # Step 3: Stream chunks, generate embeddings, and insert into Milvus incrementally
-        crud.update_pdf_processing_status(db, pdf_id, 1, "Chunking text and generating embeddings...")
+        await hasura_client.update_pdf_processing_status(pdf_id, 1, "Chunking text and generating embeddings...")
         logger.info(f"[PDF {pdf_id}] Starting streaming chunk processing with incremental embedding generation...")
         
         text_chunker = TextChunker(
@@ -141,7 +138,7 @@ def process_pdf_async(pdf_id: int, file_content: bytes, filename: str, db_sessio
                     except Exception as e:
                         error_msg = f"Failed to generate embeddings for batch: {str(e)}"
                         logger.error(f"[PDF {pdf_id}] {error_msg}")
-                        crud.update_pdf_processing_status(db, pdf_id, -1, error_msg)
+                        await hasura_client.update_pdf_processing_status(pdf_id, -1, error_msg)
                         return
                     
                     # Prepare data for insertion
@@ -166,11 +163,17 @@ def process_pdf_async(pdf_id: int, file_content: bytes, filename: str, db_sessio
                     except Exception as e:
                         error_msg = f"Failed to insert embeddings into Milvus: {str(e)}"
                         logger.error(f"[PDF {pdf_id}] {error_msg}")
-                        crud.update_pdf_processing_status(db, pdf_id, -1, error_msg)
+                        await hasura_client.update_pdf_processing_status(pdf_id, -1, error_msg)
                         return
                     
                     # Update status with progress
-                    crud.update_pdf_processing_status(db, pdf_id, 1, f"Processed {total_chunks_processed} chunks, inserted {total_embeddings_inserted} embeddings...")
+                    await hasura_client.update_pdf_processing_status(
+                        pdf_id,
+                        1,
+                        f"Processed {total_chunks_processed} chunks, inserted {total_embeddings_inserted} embeddings...",
+                        chunk_count=total_chunks_processed,
+                        embedding_count=total_embeddings_inserted,
+                    )
                     
                     # Clear batch for next round
                     chunk_batch = []
@@ -189,7 +192,7 @@ def process_pdf_async(pdf_id: int, file_content: bytes, filename: str, db_sessio
                 except Exception as e:
                     error_msg = f"Failed to generate embeddings for final batch: {str(e)}"
                     logger.error(f"[PDF {pdf_id}] {error_msg}")
-                    crud.update_pdf_processing_status(db, pdf_id, -1, error_msg)
+                    await hasura_client.update_pdf_processing_status(pdf_id, -1, error_msg)
                     return
                 
                 embeddings_data = []
@@ -212,21 +215,22 @@ def process_pdf_async(pdf_id: int, file_content: bytes, filename: str, db_sessio
                 except Exception as e:
                     error_msg = f"Failed to insert embeddings into Milvus: {str(e)}"
                     logger.error(f"[PDF {pdf_id}] {error_msg}")
-                    crud.update_pdf_processing_status(db, pdf_id, -1, error_msg)
+                    await hasura_client.update_pdf_processing_status(pdf_id, -1, error_msg)
                     return
         
         except Exception as e:
             error_msg = f"Error during streaming chunk processing: {str(e)}"
             logger.error(f"[PDF {pdf_id}] ❌ {error_msg}", exc_info=True)
-            crud.update_pdf_processing_status(db, pdf_id, -1, error_msg)
+            await hasura_client.update_pdf_processing_status(pdf_id, -1, error_msg)
             return
         
         # Step 4: Update PDF processing status to completed
-        crud.update_pdf_processing_status(
-            db, pdf_id, 2,
-            f"Processing completed successfully",
+        await hasura_client.update_pdf_processing_status(
+            pdf_id,
+            2,
+            "Processing completed successfully",
             chunk_count=total_chunks_processed,
-            embedding_count=total_embeddings_inserted
+            embedding_count=total_embeddings_inserted,
         )
         
         logger.info(f"[PDF {pdf_id}] ✅ PDF processing completed successfully")
@@ -235,9 +239,7 @@ def process_pdf_async(pdf_id: int, file_content: bytes, filename: str, db_sessio
     except Exception as e:
         error_msg = f"Processing failed: {str(e)}"
         logger.error(f"[PDF {pdf_id}] ❌ {error_msg}", exc_info=True)
-        crud.update_pdf_processing_status(db, pdf_id, -1, error_msg)
-    finally:
-        db.close()
+        await hasura_client.update_pdf_processing_status(pdf_id, -1, error_msg)
 
 
 @router.post("/upload", response_model=PDFUploadResponse, status_code=status.HTTP_201_CREATED)
@@ -245,7 +247,6 @@ async def upload_pdf(
     file: UploadFile = File(...),
     description: str = Form(None),
     background_tasks: BackgroundTasks = BackgroundTasks(),
-    db: Session = Depends(get_db)
 ):
     """
     Upload a PDF file to MinIO and store metadata in PostgreSQL
@@ -271,8 +272,8 @@ async def upload_pdf(
         timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S_")
         minio_path = f"{settings.MINIO_BUCKET_NAME}/{timestamp}{file.filename}"
         
-        # Check if file already exists in database
-        if crud.pdf_exists_by_path(db, minio_path):
+        # Check if file already exists in Hasura
+        if await hasura_client.pdf_exists_by_path(minio_path):
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail="A file with this name was recently uploaded. Please try again or use a different filename."
@@ -288,31 +289,28 @@ async def upload_pdf(
             content_type="application/pdf"
         )
         
-        # Store metadata in PostgreSQL
-        pdf_doc = crud.create_pdf_document(
-            db=db,
+        # Store metadata in Hasura/PostgreSQL
+        pdf_doc = await hasura_client.create_pdf_document(
             filename=file.filename,
             minio_path=minio_path,
             file_size=file_size,
-            description=description
+            description=description,
+            processing_status="Pending processing",
+            is_processed=0,
         )
-        
-        # Set initial processing status to pending
-        crud.update_pdf_processing_status(db, pdf_doc.id, 0, "Pending processing")
         
         # Add background task to process PDF
         background_tasks.add_task(
             process_pdf_async,
-            pdf_doc.id,
+            pdf_doc["id"],
             file_content,
             file.filename,
-            db
         )
         
         return PDFUploadResponse(
             success=True,
             message=f"PDF '{file.filename}' uploaded successfully. Processing started in background.",
-            pdf=PDFDocumentResponse.model_validate(pdf_doc.to_dict())
+            pdf=PDFDocumentResponse.model_validate(pdf_doc)
         )
         
     except HTTPException:
@@ -330,34 +328,34 @@ async def upload_pdf(
 
 
 @router.get("/documents", response_model=list[PDFDocumentResponse])
-async def get_all_pdfs(db: Session = Depends(get_db)):
+async def get_all_pdfs():
     """
-    Get all uploaded PDF documents
+    Get all uploaded PDF documents (via Hasura GraphQL)
     """
-    pdfs = crud.get_all_pdfs(db)
-    return [PDFDocumentResponse.model_validate(pdf.to_dict()) for pdf in pdfs]
+    pdfs = await hasura_client.get_all_pdfs()
+    return [PDFDocumentResponse.model_validate(pdf) for pdf in pdfs]
 
 
 @router.get("/documents/{pdf_id}", response_model=PDFDocumentResponse)
-async def get_pdf(pdf_id: int, db: Session = Depends(get_db)):
+async def get_pdf(pdf_id: int):
     """
-    Get a specific PDF document by ID
+    Get a specific PDF document by ID (via Hasura GraphQL)
     """
-    pdf = crud.get_pdf_by_id(db, pdf_id)
+    pdf = await hasura_client.get_pdf_by_id(pdf_id)
     if not pdf:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="PDF document not found"
         )
-    return PDFDocumentResponse.model_validate(pdf.to_dict())
+    return PDFDocumentResponse.model_validate(pdf)
 
 
 @router.delete("/documents/{pdf_id}", status_code=status.HTTP_200_OK)
-async def delete_pdf(pdf_id: int, db: Session = Depends(get_db)):
+async def delete_pdf(pdf_id: int):
     """
-    Delete a PDF document from MinIO and database
+    Delete a PDF document from MinIO and database (metadata via Hasura)
     """
-    pdf = crud.get_pdf_by_id(db, pdf_id)
+    pdf = await hasura_client.get_pdf_by_id(pdf_id)
     if not pdf:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -366,17 +364,17 @@ async def delete_pdf(pdf_id: int, db: Session = Depends(get_db)):
     
     try:
         # Extract filename from minio_path (e.g., "pdf/20240121_120000_document.pdf" -> "20240121_120000_document.pdf")
-        minio_filename = pdf.minio_path.split('/')[-1]
+        minio_filename = pdf.get("minio_path", "").split('/')[-1]
         
         # Delete from MinIO
         minio_client.remove_object(settings.MINIO_BUCKET_NAME, minio_filename)
         
-        # Delete from database
-        crud.delete_pdf(db, pdf_id)
+        # Delete metadata via Hasura
+        await hasura_client.delete_pdf(pdf_id)
         
         return {
             "success": True,
-            "message": f"PDF '{pdf.filename}' deleted successfully"
+            "message": f"PDF '{pdf.get('filename')}' deleted successfully"
         }
         
     except S3Error as e:
@@ -392,11 +390,11 @@ async def delete_pdf(pdf_id: int, db: Session = Depends(get_db)):
 
 
 @router.get("/documents/{pdf_id}/download")
-async def download_pdf(pdf_id: int, db: Session = Depends(get_db)):
+async def download_pdf(pdf_id: int):
     """
     Get download link for a PDF document
     """
-    pdf = crud.get_pdf_by_id(db, pdf_id)
+    pdf = await hasura_client.get_pdf_by_id(pdf_id)
     if not pdf:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -405,7 +403,7 @@ async def download_pdf(pdf_id: int, db: Session = Depends(get_db)):
     
     try:
         # Extract filename from minio_path
-        minio_filename = pdf.minio_path.split('/')[-1]
+        minio_filename = pdf.get("minio_path", "").split('/')[-1]
         
         # Generate presigned URL for download (valid for 7 days)
         url = minio_client.get_presigned_url(
@@ -418,7 +416,7 @@ async def download_pdf(pdf_id: int, db: Session = Depends(get_db)):
         return {
             "success": True,
             "download_url": url,
-            "filename": pdf.filename
+            "filename": pdf.get("filename")
         }
         
     except S3Error as e:
@@ -429,11 +427,11 @@ async def download_pdf(pdf_id: int, db: Session = Depends(get_db)):
 
 
 @router.get("/documents/{pdf_id}/processing-status")
-async def get_processing_status(pdf_id: int, db: Session = Depends(get_db)):
+async def get_processing_status(pdf_id: int):
     """
     Get processing status of a PDF document
     """
-    pdf = crud.get_pdf_by_id(db, pdf_id)
+    pdf = await hasura_client.get_pdf_by_id(pdf_id)
     if not pdf:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -448,12 +446,12 @@ async def get_processing_status(pdf_id: int, db: Session = Depends(get_db)):
     }
     
     return {
-        "pdf_id": pdf.id,
-        "filename": pdf.filename,
-        "status": status_map.get(pdf.is_processed, "unknown"),
-        "status_code": pdf.is_processed,
-        "message": pdf.processing_status,
-        "chunk_count": pdf.chunk_count,
-        "embedding_count": pdf.embedding_count,
-        "processed_at": pdf.processed_at.isoformat() if pdf.processed_at else None
+        "pdf_id": pdf.get("id"),
+        "filename": pdf.get("filename"),
+        "status": status_map.get(pdf.get("is_processed"), "unknown"),
+        "status_code": pdf.get("is_processed"),
+        "message": pdf.get("processing_status"),
+        "chunk_count": pdf.get("chunk_count"),
+        "embedding_count": pdf.get("embedding_count"),
+        "processed_at": pdf.get("processed_at"),
     }
