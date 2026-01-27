@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from config import settings
-from database import engine, Base
+from database import engine, Base, ensure_pdf_schema
 from models import PDFDocument
 import logging
 
@@ -9,7 +9,8 @@ import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Create database tables (only for PDFDocument)
+# Ensure schema drift is corrected before creating tables (handles missing minio_path column)
+ensure_pdf_schema()
 Base.metadata.create_all(bind=engine)
 
 # Initialize FastAPI app

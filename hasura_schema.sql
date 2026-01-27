@@ -68,3 +68,23 @@ CREATE TRIGGER update_edges_updated_at BEFORE UPDATE ON edges
 
 CREATE TRIGGER update_faqs_updated_at BEFORE UPDATE ON faqs
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+-- ==================== PDF_DOCUMENTS TABLE ====================
+CREATE TABLE IF NOT EXISTS pdf_documents (
+    id SERIAL PRIMARY KEY,
+    filename VARCHAR(255) NOT NULL,
+    minio_path VARCHAR(500) NOT NULL UNIQUE,
+    file_size INTEGER NOT NULL,
+    upload_date TIMESTAMP DEFAULT NOW(),
+    description VARCHAR(500),
+    is_processed INTEGER DEFAULT 0,
+    processing_status VARCHAR(255),
+    chunk_count INTEGER DEFAULT 0,
+    embedding_count INTEGER DEFAULT 0,
+    processed_at TIMESTAMP
+);
+
+-- Create indexes for better query performance
+CREATE INDEX IF NOT EXISTS idx_pdf_documents_filename ON pdf_documents(filename);
+CREATE INDEX IF NOT EXISTS idx_pdf_documents_upload_date ON pdf_documents(upload_date DESC);
+CREATE INDEX IF NOT EXISTS idx_pdf_documents_is_processed ON pdf_documents(is_processed);
+CREATE INDEX IF NOT EXISTS idx_pdf_documents_minio_path ON pdf_documents(minio_path);

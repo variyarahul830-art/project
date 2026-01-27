@@ -1,0 +1,6 @@
+{
+  "type": "reload_metadata",
+  "args": {
+    "reload_remote_schemas": true
+  }
+}
