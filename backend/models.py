@@ -1,79 +1,6 @@
-from sqlalchemy import Column, Integer, String, Text, DateTime, ForeignKey, UniqueConstraint, func, Boolean
+from sqlalchemy import Column, Integer, String, Text, DateTime, func
 from datetime import datetime
 from database import Base
-
-class Workflow(Base):
-    """Workflow - represents a collection of nodes and edges"""
-    
-    __tablename__ = "workflows"
-    
-    id = Column(Integer, primary_key=True, index=True)
-    name = Column(String(255), nullable=False, index=True)
-    description = Column(Text, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
-    
-    def to_dict(self):
-        """Convert model to dictionary"""
-        return {
-            'id': self.id,
-            'name': self.name,
-            'description': self.description,
-            'created_at': self.created_at.isoformat() if self.created_at else None,
-            'updated_at': self.updated_at.isoformat() if self.updated_at else None,
-        }
-
-
-class Node(Base):
-    """Knowledge Graph Node - represents a text/concept"""
-    
-    __tablename__ = "nodes"
-    
-    id = Column(Integer, primary_key=True, index=True)
-    workflow_id = Column(Integer, ForeignKey("workflows.id", ondelete="CASCADE"), nullable=False, index=True)
-    text = Column(Text, nullable=False, index=True)
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
-    
-    __table_args__ = (
-        UniqueConstraint('workflow_id', 'text', name='uq_node_workflow_text'),
-    )
-    
-    def to_dict(self):
-        """Convert model to dictionary"""
-        return {
-            'id': self.id,
-            'workflow_id': self.workflow_id,
-            'text': self.text,
-            'created_at': self.created_at.isoformat() if self.created_at else None,
-            'updated_at': self.updated_at.isoformat() if self.updated_at else None,
-        }
-
-
-class Edge(Base):
-    """Knowledge Graph Edge - represents a connection between nodes"""
-    
-    __tablename__ = "edges"
-    
-    id = Column(Integer, primary_key=True, index=True)
-    workflow_id = Column(Integer, ForeignKey("workflows.id", ondelete="CASCADE"), nullable=False, index=True)
-    source_node_id = Column(Integer, ForeignKey("nodes.id", ondelete="CASCADE"), nullable=False, index=True)
-    target_node_id = Column(Integer, ForeignKey("nodes.id", ondelete="CASCADE"), nullable=False, index=True)
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
-    
-    __table_args__ = (
-        UniqueConstraint('workflow_id', 'source_node_id', 'target_node_id', name='uq_workflow_edge'),
-    )
-    
-    def to_dict(self):
-        """Convert model to dictionary"""
-        return {
-            'id': self.id,
-            'workflow_id': self.workflow_id,
-            'source_node_id': self.source_node_id,
-            'target_node_id': self.target_node_id,
-            'created_at': self.created_at.isoformat() if self.created_at else None,
-        }
 
 
 class PDFDocument(Base):
@@ -110,27 +37,4 @@ class PDFDocument(Base):
             'processed_at': self.processed_at.isoformat() if self.processed_at else None,
         }
 
-
-class FAQ(Base):
-    """FAQ - Frequently Asked Questions"""
-    
-    __tablename__ = "faqs"
-    
-    id = Column(Integer, primary_key=True, index=True)
-    question = Column(Text, nullable=False, index=True)
-    answer = Column(Text, nullable=False)
-    category = Column(String(255), nullable=True, index=True)
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
-    
-    def to_dict(self):
-        """Convert model to dictionary"""
-        return {
-            'id': self.id,
-            'question': self.question,
-            'answer': self.answer,
-            'category': self.category,
-            'created_at': self.created_at.isoformat() if self.created_at else None,
-            'updated_at': self.updated_at.isoformat() if self.updated_at else None,
-        }
 

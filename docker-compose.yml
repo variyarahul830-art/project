@@ -1,6 +1,9 @@
 version: "3.8"
 
 services:
+  # -----------------------------
+  # Milvus dependencies
+  # -----------------------------
   etcd:
     image: quay.io/coreos/etcd:v3.5.5
     container_name: milvus-etcd
@@ -60,3 +63,35 @@ services:
     depends_on:
       - milvus
 
+  # -----------------------------
+  # PostgreSQL for Hasura
+  # -----------------------------
+  postgres:
+    image: postgres:15
+    container_name: hasura-postgres
+    restart: always
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: hasuradb
+    volumes:
+      - ./volumes/postgres:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+
+  # -----------------------------
+  # Hasura GraphQL Engine
+  # -----------------------------
+  hasura:
+    image: hasura/graphql-engine:v2.38.0
+    container_name: hasura
+    restart: always
+    ports:
+      - "8081:8080"
+    depends_on:
+      - postgres
+    environment:
+      HASURA_GRAPHQL_DATABASE_URL: postgres://postgres:postgres@postgres:5432/hasuradb
+      HASURA_GRAPHQL_ENABLE_CONSOLE: "true"
+      HASURA_GRAPHQL_DEV_MODE: "true"
+      HASURA_GRAPHQL_ADMIN_SECRET: myadminsecret

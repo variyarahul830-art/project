@@ -1,143 +1,21 @@
-from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy.orm import Session
-from database import get_db
+from fastapi import APIRouter, HTTPException, status
 from config import settings
 from schemas import ChatRequest
-import crud
 from services.embeddings import EmbeddingGenerator
 from services.milvus_service import MilvusService
 from services.llm_service import LLMService
 import logging
-import json
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/chat", tags=["Chat"])
 
 @router.post("/", response_model=dict)
-async def chat(request: ChatRequest, db: Session = Depends(get_db)):
-    """
-    Send a question and get connected target nodes from the knowledge graph.
-    IMPORTANT: Searches across ALL workflows regardless of workflow_id parameter.
-    
-    Priority:
-    1. Exact match on source nodes (across all workflows) -> return their targets
-    2. Partial/fuzzy match on source nodes (across all workflows) -> return their targets
-    3. Fallback to RAG (PDF embeddings + LLM)
-    
-    - **question**: The user's question/source node text (required)
-    - **workflow_id**: Ignored - always searches across all workflows
-    """
+async def chat(request: ChatRequest):
+    """Answer a question using PDF-based RAG (Milvus + LLM)."""
     try:
-        logger.info(f"Processing question: {request.question}")
-        logger.info(f"Searching across ALL workflows (workflow_id parameter ignored)")
-        
-        # Step 1: Try exact match on source node (search ALL workflows)
-        logger.info("Step 1: Trying exact text match on source nodes across ALL workflows...")
-        source_node = crud.get_node_by_text(db, request.question, workflow_id=None)
-        
-        if source_node:
-            logger.info(f"Found exact source node: {source_node.text}")
-            target_nodes = crud.get_target_nodes(db, source_node.id)
-            
-            if target_nodes:
-                logger.info(f"Found {len(target_nodes)} target nodes from exact source match")
-                clickable_answers = []
-                for target_node in target_nodes:
-                    further_nodes = crud.get_further_options(db, target_node.id)
-                    is_source = len(further_nodes) > 0
-                    clickable_answers.append({
-                        "text": target_node.text,
-                        "id": target_node.id,
-                        "is_source": is_source
-                    })
-                
-                return {
-                    "success": True,
-                    "question": source_node.text,
-                    "answers": [node.text for node in target_nodes],
-                    "target_nodes": [{"id": node.id, "text": node.text, "is_source": clickable_answers[[t.id for t in target_nodes].index(node.id)]["is_source"]} for node in target_nodes],
-                    "source": "knowledge_graph",
-                    "count": len(target_nodes)
-                }
-        
-        # Step 2: Try partial/fuzzy matching on all source nodes (search ALL workflows)
-        logger.info("Step 2: Trying partial text match on source nodes across ALL workflows...")
-        matching_nodes = crud.search_nodes_by_text(db, request.question, workflow_id=None)
-        
-        if matching_nodes:
-            logger.info(f"Found {len(matching_nodes)} matching source nodes via partial search")
-            # Get all target nodes for all matching nodes
-            all_target_nodes = []
-            for source in matching_nodes:
-                targets = crud.get_target_nodes(db, source.id)
-                all_target_nodes.extend(targets)
-            
-            # Remove duplicates while preserving order
-            seen = set()
-            unique_targets = []
-            for node in all_target_nodes:
-                if node.id not in seen:
-                    seen.add(node.id)
-                    unique_targets.append(node)
-            
-            if unique_targets:
-                logger.info(f"Found {len(unique_targets)} unique target nodes from partial source matches")
-                clickable_answers = []
-                for target_node in unique_targets:
-                    further_nodes = crud.get_further_options(db, target_node.id)
-                    is_source = len(further_nodes) > 0
-                    clickable_answers.append({
-                        "text": target_node.text,
-                        "id": target_node.id,
-                        "is_source": is_source
-                    })
-                
-                return {
-                    "success": True,
-                    "question": request.question,
-                    "answers": [node.text for node in unique_targets],
-                    "target_nodes": [{"id": node.id, "text": node.text, "is_source": clickable_answers[[t.id for t in unique_targets].index(node.id)]["is_source"]} for node in unique_targets],
-                    "source": "knowledge_graph",
-                    "count": len(unique_targets)
-                }
-            else:
-                logger.info("Partial match found source nodes, but they have no target connections")
-        
-        # Step 2: Try to find answer in FAQs
-        logger.info("Step 3: Searching FAQs...")
-        faq_exact = crud.search_faq_by_question(db, request.question)
-        
-        if faq_exact:
-            logger.info(f"✅ Found exact FAQ match")
-            return {
-                "success": True,
-                "question": request.question,
-                "answer": faq_exact.answer,
-                "source": "faq",
-                "faq_id": faq_exact.id,
-                "category": faq_exact.category
-            }
-        
-        # Try partial FAQ match
-        faq_partial = crud.search_faq_partial(db, request.question)
-        if faq_partial:
-            logger.info(f"✅ Found {len(faq_partial)} partial FAQ matches")
-            # Return the first (most relevant) partial match
-            best_faq = faq_partial[0]
-            return {
-                "success": True,
-                "question": request.question,
-                "answer": best_faq.answer,
-                "source": "faq",
-                "faq_id": best_faq.id,
-                "category": best_faq.category,
-                "match_type": "partial"
-            }
-        
-        logger.info("No FAQs found, trying RAG approach with PDF embeddings")
-        
-        # Step 2: If not found in knowledge graph, use RAG approach
+        logger.info(f"Processing question via RAG: {request.question}")
+
         # Generate embedding for the question
         logger.info("Generating embedding for question...")
         embedding_generator = EmbeddingGenerator(
@@ -177,7 +55,7 @@ async def chat(request: ChatRequest, db: Session = Depends(get_db)):
         
         logger.info(f"✅ Found {len(similar_chunks)} similar chunks")
         
-        # Step 3: Generate answer using LLM with context
+        # Generate answer using LLM with context
         logger.info("Generating answer using LLM with Hugging Face...")
         
         # Get token from settings

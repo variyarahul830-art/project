@@ -2,16 +2,21 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from config import settings
 from database import engine, Base
-from models import Node, Edge, PDFDocument, Workflow, FAQ
+from models import PDFDocument
+import logging
 
-# Create database tables
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# Create database tables (only for PDFDocument)
 Base.metadata.create_all(bind=engine)
 
 # Initialize FastAPI app
 app = FastAPI(
-    title="Knowledge Graph Chatbot Backend",
-    description="REST API for knowledge graph-based chatbot with PostgreSQL",
-    version="2.0.0"
+    title="AI PDF Chatbot API",
+    description="REST API for PDF processing and Chat (Workflows/Nodes/Edges/FAQs use Hasura GraphQL)",
+    version="3.0.0"
 )  
 
 # Configure CORS
@@ -24,42 +29,42 @@ app.add_middleware(
 )
 
 # Import routes after app initialization to avoid circular imports
-from routes import graph, chat, pdf, workflows, faq
+from routes import chat, pdf
 
-# Include routers
-app.include_router(workflows.router)
-
-app.include_router(graph.router)
-
+# Include routers (only PDF and Chat - Workflows/FAQs handled by Hasura)
 app.include_router(chat.router)
-
-app.include_router(pdf
-                   .router)
-
-app.include_router(faq.router)
+app.include_router(pdf.router)
 
 @app.get("/health")
 async def health_check():
     """Health check endpoint"""
     return {
-        "status": "OK",
-        "message": "Backend is running"
+        "status": "healthy",
+        "message": "AI PDF Chatbot API is running",
+        "hasura_url": settings.HASURA_URL
     }
 
 @app.get("/")
 async def root():
     """Root endpoint"""
     return {
-        "message": "Chatbot Backend API",
-         "version": "2.0.0",
+        "message": "AI PDF Chatbot API",
+        "version": "3.0.0",
+        "documentation": "/docs",
+        "health": "/health",
         "endpoints": {
-             "POST /api/graph/nodes": "Create node",
-             "GET /api/graph/nodes": "Get all nodes",
-             "POST /api/graph/edges": "Create edge",
-             "GET /api/graph/edges": "Get all edges",
-             "GET /api/graph": "Get complete graph",
-             "POST /api/chat": "Query graph",
-            "GET /health": "Health check"
+            "PDF": {
+                "POST /api/pdf/upload": "Upload PDF",
+                "GET /api/pdf/documents": "List PDFs",
+                "GET /api/pdf/documents/{id}": "Get PDF",
+            },
+            "Chat": {
+                "POST /api/chat": "Send chat message",
+            },
+            "GraphQL": {
+                "Hasura GraphQL": settings.HASURA_URL,
+                "Console": "http://localhost:8081"
+            }
         }
     }
 

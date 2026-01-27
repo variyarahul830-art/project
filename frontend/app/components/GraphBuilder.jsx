@@ -10,7 +10,7 @@ import ReactFlow, {
   Position,
 } from 'reactflow';
 import 'reactflow/dist/style.css';
-import { createNode, createEdge, getAllNodes, deleteNode, deleteEdge, getAllEdges } from '../services/api';
+import * as hasura from '../services/hasura';
 
 // Custom Node Component with handles
 function CustomNode({ data, id, selected }) {
@@ -82,14 +82,12 @@ export default function GraphBuilder({ initialWorkflowId, onWorkflowChange }) {
 
   const loadWorkflows = async () => {
     try {
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}/api/workflows`);
-      if (response.ok) {
-        const data = await response.json();
-        setWorkflows(data.data || []);
-        // Set first workflow as current if none selected
-        if (data.data && data.data.length > 0 && !currentWorkflowId) {
-          setCurrentWorkflowId(data.data[0].id);
-        }
+      const data = await hasura.getWorkflows();
+      const workflowsList = data.workflows || [];
+      setWorkflows(workflowsList);
+      // Set first workflow as current if none selected
+      if (workflowsList.length > 0 && !currentWorkflowId) {
+        setCurrentWorkflowId(workflowsList[0].id);
       }
     } catch (err) {
       console.error('Failed to load workflows:', err);
@@ -98,15 +96,13 @@ export default function GraphBuilder({ initialWorkflowId, onWorkflowChange }) {
 
   const loadWorkflowData = async (workflowId) => {
     try {
-      const nodesRes = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}/api/workflows/${workflowId}/nodes`);
-      const edgesRes = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}/api/workflows/${workflowId}/edges`);
+      const [nodesData, edgesData] = await Promise.all([
+        hasura.getNodes(workflowId),
+        hasura.getEdges(workflowId)
+      ]);
       
-      if (nodesRes.ok && edgesRes.ok) {
-        const nodesData = await nodesRes.json();
-        const edgesData = await edgesRes.json();
-        setDbNodes(nodesData.data || []);
-        setDbEdges(edgesData.data || []);
-      }
+      setDbNodes(nodesData.nodes || []);
+      setDbEdges(edgesData.edges || []);
     } catch (err) {
       console.error('Failed to load workflow data:', err);
     }
@@ -121,23 +117,15 @@ export default function GraphBuilder({ initialWorkflowId, onWorkflowChange }) {
 
     setLoading(true);
     try {
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}/api/workflows`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: newWorkflowName.trim(), description: '' }),
-      });
-
-      if (response.ok) {
-        const data = await response.json();
-        setWorkflows([...workflows, data.data]);
-        setCurrentWorkflowId(data.data.id);
-        setNewWorkflowName('');
-        setShowNewWorkflowForm(false);
-        setSuccess('Workflow created successfully!');
-        setTimeout(() => setSuccess(''), 3000);
-      } else {
-        setError('Failed to create workflow');
-      }
+      const data = await hasura.createWorkflow(newWorkflowName.trim(), '');
+      const newWorkflow = data.insert_workflows_one;
+      
+      setWorkflows([...workflows, newWorkflow]);
+      setCurrentWorkflowId(newWorkflow.id);
+      setNewWorkflowName('');
+      setShowNewWorkflowForm(false);
+      setSuccess('Workflow created successfully!');
+      setTimeout(() => setSuccess(''), 3000);
     } catch (err) {
       setError(err.message || 'Failed to create workflow');
     } finally {
@@ -248,13 +236,12 @@ export default function GraphBuilder({ initialWorkflowId, onWorkflowChange }) {
     setSuccess('');
 
     try {
-      const res = await createNode(newNodeText.trim(), currentWorkflowId);
-      if (res.success) {
-        setDbNodes([res.data, ...dbNodes]);
-        setNewNodeText('');
-        setSuccess('Node created successfully!');
-        setTimeout(() => setSuccess(''), 3000);
-      }
+      const data = await hasura.createNode(currentWorkflowId, newNodeText.trim());
+      const newNode = data.insert_nodes_one;
+      setDbNodes([newNode, ...dbNodes]);
+      setNewNodeText('');
+      setSuccess('Node created successfully!');
+      setTimeout(() => setSuccess(''), 3000);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to create node');
     } finally {
@@ -282,12 +269,11 @@ export default function GraphBuilder({ initialWorkflowId, onWorkflowChange }) {
       setError('');
 
       try {
-        const res = await createEdge(sourceId, targetId, currentWorkflowId);
-        if (res.success) {
-          setDbEdges([res.data, ...dbEdges]);
-          setSuccess('Connection created!');
-          setTimeout(() => setSuccess(''), 3000);
-        }
+        const data = await hasura.createEdge(currentWorkflowId, sourceId, targetId);
+        const newEdge = data.insert_edges_one;
+        setDbEdges([newEdge, ...dbEdges]);
+        setSuccess('Connection created!');
+        setTimeout(() => setSuccess(''), 3000);
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Failed to create edge');
         setTimeout(() => setError(''), 3000);
@@ -312,7 +298,7 @@ export default function GraphBuilder({ initialWorkflowId, onWorkflowChange }) {
     if (!confirm('Delete this node? Connected edges will also be deleted.')) return;
 
     try {
-      await deleteNode(nodeId);
+      await hasura.deleteNode(nodeId);
       setDbNodes(dbNodes.filter(n => n.id !== nodeId));
       setDbEdges(dbEdges.filter(e => e.source_node_id !== nodeId && e.target_node_id !== nodeId));
       setSuccess('Node deleted successfully!');
@@ -326,7 +312,7 @@ export default function GraphBuilder({ initialWorkflowId, onWorkflowChange }) {
 
   const handleDeleteEdge = async (edgeId) => {
     try {
-      await deleteEdge(edgeId);
+      await hasura.deleteEdge(edgeId);
       setDbEdges(dbEdges.filter(e => e.id !== edgeId));
       setSuccess('Edge deleted successfully!');
       setTimeout(() => setSuccess(''), 3000);

@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import styles from './FAQManagement.module.css';
+import * as hasura from '../services/hasura';
 
 export default function FAQManagement() {
   const [faqs, setFaqs] = useState([]);
@@ -22,15 +23,16 @@ export default function FAQManagement() {
     fetchCategories();
   }, []);
 
+  // Re-fetch FAQs when filter changes
+  useEffect(() => {
+    fetchFAQs();
+  }, [filter]);
+
   const fetchFAQs = async () => {
     setLoading(true);
     try {
-      const baseURL = 'http://localhost:8000';
-      const url = filter ? `${baseURL}/api/faq?category=${filter}` : `${baseURL}/api/faq`;
-      console.log('Fetching FAQs from:', url);
-      const response = await fetch(url);
-      const data = await response.json();
-      setFaqs(data);
+      const data = await hasura.getFAQs(filter || null);
+      setFaqs(data.faqs || []);
     } catch (error) {
       console.error('Error fetching FAQs:', error);
       alert('Error fetching FAQs: ' + error.message);
@@ -40,12 +42,12 @@ export default function FAQManagement() {
 
   const fetchCategories = async () => {
     try {
-      const baseURL = 'http://localhost:8000';
-      const url = `${baseURL}/api/faq/categories`;
-      console.log('Fetching categories from:', url);
-      const response = await fetch(url);
-      const data = await response.json();
-      setCategories(data);
+      const data = await hasura.getFAQCategories();
+      const uniqueCategories = data.faqs
+        .map(faq => faq.category)
+        .filter(cat => cat && cat.trim())
+        .filter((cat, idx, arr) => arr.indexOf(cat) === idx);
+      setCategories(uniqueCategories);
     } catch (error) {
       console.error('Error fetching categories:', error);
     }
@@ -63,32 +65,23 @@ export default function FAQManagement() {
     setLoading(true);
 
     try {
-      const baseURL = 'http://localhost:8000';
-      const method = editingId ? 'PUT' : 'POST';
-      const url = editingId ? `${baseURL}/api/faq/${editingId}` : `${baseURL}/api/faq`;
-
-      console.log('Submitting FAQ to:', url, 'Method:', method);
-      console.log('Form data:', formData);
-
-      const response = await fetch(url, {
-        method,
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(formData),
-      });
-
-      console.log('Response status:', response.status);
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.detail || 'Failed to save FAQ');
+      if (editingId) {
+        await hasura.updateFAQ(
+          editingId,
+          formData.question.trim(),
+          formData.answer.trim(),
+          formData.category.trim() || null
+        );
+      } else {
+        await hasura.createFAQ(
+          formData.question.trim(),
+          formData.answer.trim(),
+          formData.category.trim() || null
+        );
       }
 
-      const responseData = await response.json();
-      console.log('Success! Response:', responseData);
-
       await fetchFAQs();
+      await fetchCategories();
       setFormData({ question: '', answer: '', category: '' });
       setEditingId(null);
       setShowForm(false);
@@ -114,18 +107,10 @@ export default function FAQManagement() {
     if (!confirm('Are you sure you want to delete this FAQ?')) return;
 
     try {
-      const baseURL = 'http://localhost:8000';
-      const url = `${baseURL}/api/faq/${id}`;
-      console.log('Deleting FAQ:', url);
-
-      const response = await fetch(url, {
-        method: 'DELETE',
-      });
-
-      if (!response.ok) throw new Error('Failed to delete FAQ');
-
-      console.log('FAQ deleted successfully');
+      await hasura.deleteFAQ(id);
       await fetchFAQs();
+      await fetchCategories();
+      alert('FAQ deleted successfully!');
     } catch (error) {
       console.error('Error deleting FAQ:', error);
       alert('Error deleting FAQ: ' + error.message);
@@ -159,17 +144,7 @@ export default function FAQManagement() {
           onChange={(e) => {
             const selectedCategory = e.target.value;
             setFilter(selectedCategory);
-            if (selectedCategory) {
-              const baseURL = 'http://localhost:8000';
-              const url = `${baseURL}/api/faq?category=${selectedCategory}`;
-              console.log('Filtering by category:', url);
-              fetch(url)
-                .then(r => r.json())
-                .then(setFaqs)
-                .catch(error => console.error('Error filtering FAQs:', error));
-            } else {
-              fetchFAQs();
-            }
+            // fetchFAQs will be called by useEffect when filter changes
           }}
           className={styles.categorySelect}
         >
