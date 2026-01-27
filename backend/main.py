@@ -4,7 +4,6 @@ from config import settings
 from database import engine, Base, ensure_pdf_schema
 from models import PDFDocument
 import logging
-
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -35,6 +34,7 @@ from routes import chat, pdf
 # Include routers (only PDF and Chat - Workflows/FAQs handled by Hasura)
 app.include_router(chat.router)
 app.include_router(pdf.router)
+
 
 @app.get("/health")
 async def health_check():

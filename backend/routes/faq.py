@@ -1,7 +1,5 @@
-from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy.orm import Session
-from database import get_db
-import crud
+from fastapi import APIRouter, HTTPException, status
+from services import hasura_client
 from schemas import FAQCreate, FAQResponse, FAQUpdate
 import logging
 
@@ -11,17 +9,16 @@ router = APIRouter(prefix="/api/faq", tags=["FAQ"])
 
 
 @router.post("/", response_model=FAQResponse, status_code=status.HTTP_201_CREATED)
-async def create_faq(faq_data: FAQCreate, db: Session = Depends(get_db)):
+async def create_faq(faq_data: FAQCreate):
     """Create a new FAQ"""
     try:
-        faq = crud.create_faq(
-            db=db,
+        faq = await hasura_client.create_faq(
             question=faq_data.question,
             answer=faq_data.answer,
-            category=faq_data.category
+            category=faq_data.category,
         )
-        logger.info(f"✅ FAQ created: {faq.id}")
-        return faq
+        logger.info(f"✅ FAQ created: {faq['id']}")
+        return FAQResponse.model_validate(faq)
     except Exception as e:
         logger.error(f"❌ Error creating FAQ: {str(e)}")
         raise HTTPException(
@@ -31,12 +28,12 @@ async def create_faq(faq_data: FAQCreate, db: Session = Depends(get_db)):
 
 
 @router.get("/", response_model=list[FAQResponse])
-async def get_all_faqs(category: str = None, db: Session = Depends(get_db)):
+async def get_all_faqs(category: str = None):
     """Get all FAQs, optionally filtered by category"""
     try:
-        faqs = crud.get_all_faqs(db=db, category=category)
+        faqs = await hasura_client.get_faqs(category=category)
         logger.info(f"✅ Retrieved {len(faqs)} FAQs")
-        return faqs
+        return [FAQResponse.model_validate(f) for f in faqs]
     except Exception as e:
         logger.error(f"❌ Error retrieving FAQs: {str(e)}")
         raise HTTPException(
@@ -46,10 +43,10 @@ async def get_all_faqs(category: str = None, db: Session = Depends(get_db)):
 
 
 @router.get("/categories", response_model=list[str])
-async def get_faq_categories(db: Session = Depends(get_db)):
+async def get_faq_categories():
     """Get all unique FAQ categories"""
     try:
-        categories = crud.get_faq_categories(db=db)
+        categories = await hasura_client.get_faq_categories()
         return categories
     except Exception as e:
         logger.error(f"❌ Error retrieving categories: {str(e)}")
@@ -60,16 +57,16 @@ async def get_faq_categories(db: Session = Depends(get_db)):
 
 
 @router.get("/{faq_id}", response_model=FAQResponse)
-async def get_faq(faq_id: int, db: Session = Depends(get_db)):
+async def get_faq(faq_id: int):
     """Get FAQ by ID"""
     try:
-        faq = crud.get_faq_by_id(db=db, faq_id=faq_id)
+        faq = await hasura_client.get_faq_by_id(faq_id=faq_id)
         if not faq:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"FAQ with ID {faq_id} not found"
             )
-        return faq
+        return FAQResponse.model_validate(faq)
     except HTTPException:
         raise
     except Exception as e:
@@ -81,17 +78,17 @@ async def get_faq(faq_id: int, db: Session = Depends(get_db)):
 
 
 @router.get("/search/exact", response_model=FAQResponse)
-async def search_faq_exact(question: str, db: Session = Depends(get_db)):
+async def search_faq_exact(question: str):
     """Search for FAQ by exact question match"""
     try:
-        faq = crud.search_faq_by_question(db=db, question_text=question)
+        faq = await hasura_client.search_faq_exact(question)
         if not faq:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="No matching FAQ found"
             )
         logger.info(f"✅ Found exact FAQ match for: {question[:50]}...")
-        return faq
+        return FAQResponse.model_validate(faq)
     except HTTPException:
         raise
     except Exception as e:
@@ -103,12 +100,12 @@ async def search_faq_exact(question: str, db: Session = Depends(get_db)):
 
 
 @router.get("/search/partial", response_model=list[FAQResponse])
-async def search_faq_partial(question: str, db: Session = Depends(get_db)):
+async def search_faq_partial(question: str):
     """Search for FAQs by partial question match"""
     try:
-        faqs = crud.search_faq_partial(db=db, question_text=question)
+        faqs = await hasura_client.search_faq_partial(question)
         logger.info(f"✅ Found {len(faqs)} partial FAQ matches for: {question[:50]}...")
-        return faqs
+        return [FAQResponse.model_validate(f) for f in faqs]
     except Exception as e:
         logger.error(f"❌ Error searching FAQs: {str(e)}")
         raise HTTPException(
@@ -118,15 +115,14 @@ async def search_faq_partial(question: str, db: Session = Depends(get_db)):
 
 
 @router.put("/{faq_id}", response_model=FAQResponse)
-async def update_faq(faq_id: int, faq_data: FAQUpdate, db: Session = Depends(get_db)):
+async def update_faq(faq_id: int, faq_data: FAQUpdate):
     """Update an FAQ"""
     try:
-        faq = crud.update_faq(
-            db=db,
+        faq = await hasura_client.update_faq(
             faq_id=faq_id,
             question=faq_data.question,
             answer=faq_data.answer,
-            category=faq_data.category
+            category=faq_data.category,
         )
         if not faq:
             raise HTTPException(
@@ -134,7 +130,7 @@ async def update_faq(faq_id: int, faq_data: FAQUpdate, db: Session = Depends(get
                 detail=f"FAQ with ID {faq_id} not found"
             )
         logger.info(f"✅ FAQ updated: {faq_id}")
-        return faq
+        return FAQResponse.model_validate(faq)
     except HTTPException:
         raise
     except Exception as e:
@@ -146,10 +142,10 @@ async def update_faq(faq_id: int, faq_data: FAQUpdate, db: Session = Depends(get
 
 
 @router.delete("/{faq_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_faq(faq_id: int, db: Session = Depends(get_db)):
+async def delete_faq(faq_id: int):
     """Delete an FAQ"""
     try:
-        success = crud.delete_faq(db=db, faq_id=faq_id)
+        success = await hasura_client.delete_faq(faq_id=faq_id)
         if not success:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,

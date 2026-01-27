@@ -2,7 +2,7 @@
 Hasura GraphQL Client Service
 Provides utility functions to query Hasura GraphQL API
 """
-
+from __future__ import annotations
 import httpx
 import logging
 from datetime import datetime
@@ -10,53 +10,66 @@ from config import settings
 
 logger = logging.getLogger(__name__)
 
+"""
+Hasura GraphQL Client Service
+Provides async utility functions to query Hasura GraphQL API.
+"""
+
+
+
+import logging
+from datetime import datetime
+from typing import Optional
+
+import httpx
+
+from config import settings
+
+logger = logging.getLogger(__name__)
+
 
 class HasuraClient:
-    """Client for interacting with Hasura GraphQL API"""
+    """Client for interacting with Hasura GraphQL API."""
 
     def __init__(self):
         self.url = settings.HASURA_URL
         self.headers = {
             "Content-Type": "application/json",
-            "x-hasura-admin-secret": settings.HASURA_ADMIN_SECRET
+            "x-hasura-admin-secret": settings.HASURA_ADMIN_SECRET,
         }
 
-    async def execute(self, query: str, variables: dict = None):
-        """Execute GraphQL query against Hasura"""
+    async def execute(self, query: str, variables: Optional[dict] = None) -> dict:
+        """Execute GraphQL query against Hasura."""
         try:
             async with httpx.AsyncClient() as client:
-                payload = {"query": query}
-                if variables:
-                    payload["variables"] = variables
-
+                payload = {"query": query, "variables": variables or {}}
                 response = await client.post(
                     self.url,
                     json=payload,
                     headers=self.headers,
-                    timeout=30.0
+                    timeout=30.0,
                 )
 
                 result = response.json()
 
                 if "errors" in result:
-                    logger.error(f"Hasura GraphQL Error: {result['errors']}")
+                    logger.error("Hasura GraphQL Error: %s", result["errors"])
                     raise Exception(f"GraphQL Error: {result['errors']}")
 
-                return result.get("data")
+                return result.get("data", {})
 
-        except Exception as e:
-            logger.error(f"Hasura Client Error: {str(e)}")
+        except Exception as exc:  # pragma: no cover - network/remote errors
+            logger.error("Hasura Client Error: %s", str(exc))
             raise
 
 
-# Initialize client
+# Initialize singleton client
 hasura = HasuraClient()
 
 
 # ==================== WORKFLOWS ====================
 
 async def get_workflows():
-    """Fetch all workflows"""
     query = """
     query GetWorkflows {
         workflows(order_by: {created_at: desc}) {
@@ -69,11 +82,10 @@ async def get_workflows():
     }
     """
     result = await hasura.execute(query)
-    return result["workflows"]
+    return result.get("workflows", [])
 
 
 async def get_workflow(workflow_id: int):
-    """Fetch single workflow"""
     query = """
     query GetWorkflow($id: Int!) {
         workflows_by_pk(id: $id) {
@@ -86,11 +98,10 @@ async def get_workflow(workflow_id: int):
     }
     """
     result = await hasura.execute(query, {"id": workflow_id})
-    return result["workflows_by_pk"]
+    return result.get("workflows_by_pk")
 
 
-async def create_workflow(name: str, description: str = None):
-    """Create new workflow"""
+async def create_workflow(name: str, description: Optional[str] = None):
     query = """
     mutation CreateWorkflow($name: String!, $description: String) {
         insert_workflows_one(object: {name: $name, description: $description}) {
@@ -102,11 +113,10 @@ async def create_workflow(name: str, description: str = None):
     }
     """
     result = await hasura.execute(query, {"name": name, "description": description})
-    return result["insert_workflows_one"]
+    return result.get("insert_workflows_one")
 
 
 async def delete_workflow(workflow_id: int):
-    """Delete workflow"""
     query = """
     mutation DeleteWorkflow($id: Int!) {
         delete_workflows_by_pk(id: $id) {
@@ -115,13 +125,12 @@ async def delete_workflow(workflow_id: int):
     }
     """
     result = await hasura.execute(query, {"id": workflow_id})
-    return result["delete_workflows_by_pk"]
+    return result.get("delete_workflows_by_pk")
 
 
 # ==================== NODES ====================
 
 async def get_nodes(workflow_id: int):
-    """Fetch nodes for workflow"""
     query = """
     query GetNodes($workflowId: Int!) {
         nodes(where: {workflow_id: {_eq: $workflowId}}, order_by: {created_at: desc}) {
@@ -133,11 +142,130 @@ async def get_nodes(workflow_id: int):
     }
     """
     result = await hasura.execute(query, {"workflowId": workflow_id})
-    return result["nodes"]
+    return result.get("nodes", [])
+
+
+async def get_all_nodes():
+    query = """
+    query GetAllNodes {
+        nodes(order_by: {created_at: desc}) {
+            id
+            text
+            workflow_id
+            created_at
+        }
+    }
+    """
+    result = await hasura.execute(query)
+    return result.get("nodes", [])
+
+
+async def get_node_by_id(node_id: int):
+    query = """
+    query GetNode($id: Int!) {
+        nodes_by_pk(id: $id) {
+            id
+            text
+            workflow_id
+            created_at
+        }
+    }
+    """
+    result = await hasura.execute(query, {"id": node_id})
+    return result.get("nodes_by_pk")
+
+
+async def node_exists(workflow_id: int, text: str) -> bool:
+    query = """
+    query NodeExists($workflowId: Int!, $text: String!) {
+        nodes(where: {workflow_id: {_eq: $workflowId}, text: {_eq: $text}}, limit: 1) {
+            id
+        }
+    }
+    """
+    result = await hasura.execute(query, {"workflowId": workflow_id, "text": text})
+    return bool(result.get("nodes"))
+
+
+async def get_node_by_text(text: str, workflow_id: Optional[int] = None):
+    """Fetch a single node by its text, optionally scoped to a workflow."""
+    if workflow_id is not None:
+        query = """
+        query GetNodeByTextScoped($text: String!, $workflowId: Int!) {
+            nodes(
+                where: {text: {_eq: $text}, workflow_id: {_eq: $workflowId}},
+                order_by: {created_at: desc},
+                limit: 1
+            ) {
+                id
+                text
+                workflow_id
+                created_at
+            }
+        }
+        """
+        variables = {"text": text, "workflowId": workflow_id}
+    else:
+        query = """
+        query GetNodeByText($text: String!) {
+            nodes(
+                where: {text: {_eq: $text}},
+                order_by: {created_at: desc},
+                limit: 1
+            ) {
+                id
+                text
+                workflow_id
+                created_at
+            }
+        }
+        """
+        variables = {"text": text}
+
+    result = await hasura.execute(query, variables)
+    nodes = result.get("nodes", [])
+    return nodes[0] if nodes else None
+
+
+async def search_nodes_by_text(text: str, workflow_id: Optional[int] = None):
+    """Partial search for nodes by text (ILIKE)."""
+    pattern = f"%{text}%"
+    if workflow_id is not None:
+        query = """
+        query SearchNodesScoped($pattern: String!, $workflowId: Int!) {
+            nodes(
+                where: {text: {_ilike: $pattern}, workflow_id: {_eq: $workflowId}},
+                order_by: {created_at: desc}
+            ) {
+                id
+                text
+                workflow_id
+                created_at
+            }
+        }
+        """
+        variables = {"pattern": pattern, "workflowId": workflow_id}
+    else:
+        query = """
+        query SearchNodes($pattern: String!) {
+            nodes(
+                where: {text: {_ilike: $pattern}},
+                order_by: {created_at: desc}
+            ) {
+                id
+                text
+                workflow_id
+                created_at
+            }
+        }
+        """
+        variables = {"pattern": pattern}
+
+    result = await hasura.execute(query, variables)
+    return result.get("nodes", [])
 
 
 async def create_node(workflow_id: int, text: str):
-    """Create new node"""
     query = """
     mutation CreateNode($workflowId: Int!, $text: String!) {
         insert_nodes_one(object: {workflow_id: $workflowId, text: $text}) {
@@ -149,11 +277,10 @@ async def create_node(workflow_id: int, text: str):
     }
     """
     result = await hasura.execute(query, {"workflowId": workflow_id, "text": text})
-    return result["insert_nodes_one"]
+    return result.get("insert_nodes_one")
 
 
 async def delete_node(node_id: int):
-    """Delete node"""
     query = """
     mutation DeleteNode($id: Int!) {
         delete_nodes_by_pk(id: $id) {
@@ -162,13 +289,12 @@ async def delete_node(node_id: int):
     }
     """
     result = await hasura.execute(query, {"id": node_id})
-    return result["delete_nodes_by_pk"]
+    return result.get("delete_nodes_by_pk")
 
 
 # ==================== EDGES ====================
 
 async def get_edges(workflow_id: int):
-    """Fetch edges for workflow"""
     query = """
     query GetEdges($workflowId: Int!) {
         edges(where: {workflow_id: {_eq: $workflowId}}, order_by: {created_at: desc}) {
@@ -181,11 +307,48 @@ async def get_edges(workflow_id: int):
     }
     """
     result = await hasura.execute(query, {"workflowId": workflow_id})
-    return result["edges"]
+    return result.get("edges", [])
+
+
+async def get_all_edges():
+    query = """
+    query GetAllEdges {
+        edges(order_by: {created_at: desc}) {
+            id
+            source_node_id
+            target_node_id
+            workflow_id
+            created_at
+        }
+    }
+    """
+    result = await hasura.execute(query)
+    return result.get("edges", [])
+
+
+async def edge_exists(workflow_id: int, source_node_id: int, target_node_id: int) -> bool:
+    query = """
+    query EdgeExists($workflowId: Int!, $sourceId: Int!, $targetId: Int!) {
+        edges(
+            where: {
+                workflow_id: {_eq: $workflowId},
+                source_node_id: {_eq: $sourceId},
+                target_node_id: {_eq: $targetId}
+            },
+            limit: 1
+        ) {
+            id
+        }
+    }
+    """
+    result = await hasura.execute(
+        query,
+        {"workflowId": workflow_id, "sourceId": source_node_id, "targetId": target_node_id},
+    )
+    return bool(result.get("edges"))
 
 
 async def create_edge(workflow_id: int, source_node_id: int, target_node_id: int):
-    """Create new edge"""
     query = """
     mutation CreateEdge($workflowId: Int!, $sourceId: Int!, $targetId: Int!) {
         insert_edges_one(object: {
@@ -196,20 +359,19 @@ async def create_edge(workflow_id: int, source_node_id: int, target_node_id: int
             id
             source_node_id
             target_node_id
+            workflow_id
             created_at
         }
     }
     """
-    result = await hasura.execute(query, {
-        "workflowId": workflow_id,
-        "sourceId": source_node_id,
-        "targetId": target_node_id
-    })
-    return result["insert_edges_one"]
+    result = await hasura.execute(
+        query,
+        {"workflowId": workflow_id, "sourceId": source_node_id, "targetId": target_node_id},
+    )
+    return result.get("insert_edges_one")
 
 
 async def delete_edge(edge_id: int):
-    """Delete edge"""
     query = """
     mutation DeleteEdge($id: Int!) {
         delete_edges_by_pk(id: $id) {
@@ -218,30 +380,164 @@ async def delete_edge(edge_id: int):
     }
     """
     result = await hasura.execute(query, {"id": edge_id})
-    return result["delete_edges_by_pk"]
+    return result.get("delete_edges_by_pk")
 
 
-# ==================== FAQS ====================
+# ==================== GRAPH HELPERS ====================
 
-async def get_faqs():
-    """Fetch all FAQs"""
+async def get_graph_data():
+    """Return all nodes and edges."""
     query = """
-    query GetFAQs {
-        faqs(order_by: {created_at: desc}) {
+    query GetGraph {
+        nodes(order_by: {created_at: desc}) {
             id
-            question
-            answer
-            category
+            text
+            workflow_id
+            created_at
+        }
+        edges(order_by: {created_at: desc}) {
+            id
+            source_node_id
+            target_node_id
+            workflow_id
             created_at
         }
     }
     """
     result = await hasura.execute(query)
-    return result["faqs"]
+    return {
+        "nodes": result.get("nodes", []),
+        "edges": result.get("edges", []),
+    }
 
 
-async def create_faq(question: str, answer: str, category: str = None):
-    """Create new FAQ"""
+async def get_target_nodes(source_node_id: int):
+    """Fetch nodes targeted by edges starting from source_node_id."""
+    query = """
+    query GetTargetNodes($sourceId: Int!) {
+        edges(where: {source_node_id: {_eq: $sourceId}}) {
+            target_node_id
+            target: target_node {
+                id
+                text
+                workflow_id
+                created_at
+            }
+        }
+    }
+    """
+    result = await hasura.execute(query, {"sourceId": source_node_id})
+    edges = result.get("edges", [])
+    return [edge.get("target") for edge in edges if edge.get("target")]
+
+
+async def get_further_options(node_id: int):
+    """Alias to fetch downstream targets for a given node."""
+    return await get_target_nodes(node_id)
+
+
+# ==================== FAQS ====================
+
+async def get_faq_by_id(faq_id: int):
+    query = """
+    query GetFaq($id: Int!) {
+        faqs_by_pk(id: $id) {
+            id
+            question
+            answer
+            category
+            created_at
+            updated_at
+        }
+    }
+    """
+    result = await hasura.execute(query, {"id": faq_id})
+    return result.get("faqs_by_pk")
+
+
+async def get_faqs(category: Optional[str] = None):
+    if category:
+        query = """
+        query GetFaqsByCategory($category: String!) {
+            faqs(where: {category: {_eq: $category}}, order_by: {created_at: desc}) {
+                id
+                question
+                answer
+                category
+                created_at
+                updated_at
+            }
+        }
+        """
+        variables = {"category": category}
+    else:
+        query = """
+        query GetFaqs {
+            faqs(order_by: {created_at: desc}) {
+                id
+                question
+                answer
+                category
+                created_at
+                updated_at
+            }
+        }
+        """
+        variables = None
+
+    result = await hasura.execute(query, variables)
+    return result.get("faqs", [])
+
+
+async def get_faq_categories():
+    query = """
+    query GetFaqCategories {
+        faqs(distinct_on: category, order_by: {category: asc}) {
+            category
+        }
+    }
+    """
+    result = await hasura.execute(query)
+    return [row.get("category") for row in result.get("faqs", []) if row.get("category")]
+
+
+async def search_faq_exact(question: str):
+    query = """
+    query SearchFaqExact($question: String!) {
+        faqs(where: {question: {_eq: $question}}, limit: 1) {
+            id
+            question
+            answer
+            category
+            created_at
+            updated_at
+        }
+    }
+    """
+    result = await hasura.execute(query, {"question": question})
+    faqs = result.get("faqs", [])
+    return faqs[0] if faqs else None
+
+
+async def search_faq_partial(question: str):
+    query = """
+    query SearchFaqPartial($pattern: String!) {
+        faqs(where: {question: {_ilike: $pattern}}, order_by: {created_at: desc}) {
+            id
+            question
+            answer
+            category
+            created_at
+            updated_at
+        }
+    }
+    """
+    pattern = f"%{question}%"
+    result = await hasura.execute(query, {"pattern": pattern})
+    return result.get("faqs", [])
+
+
+async def create_faq(question: str, answer: str, category: Optional[str] = None):
     query = """
     mutation CreateFAQ($question: String!, $answer: String!, $category: String) {
         insert_faqs_one(object: {question: $question, answer: $answer, category: $category}) {
@@ -253,40 +549,49 @@ async def create_faq(question: str, answer: str, category: str = None):
         }
     }
     """
-    result = await hasura.execute(query, {
-        "question": question,
-        "answer": answer,
-        "category": category
-    })
-    return result["insert_faqs_one"]
+    result = await hasura.execute(
+        query,
+        {"question": question, "answer": answer, "category": category},
+    )
+    return result.get("insert_faqs_one")
 
 
-async def update_faq(faq_id: int, question: str, answer: str, category: str = None):
-    """Update FAQ"""
+async def update_faq(
+    faq_id: int,
+    question: Optional[str] = None,
+    answer: Optional[str] = None,
+    category: Optional[str] = None,
+):
+    update_fields: dict[str, object] = {}
+    if question is not None:
+        update_fields["question"] = question
+    if answer is not None:
+        update_fields["answer"] = answer
+    if category is not None:
+        update_fields["category"] = category
+
+    if not update_fields:
+        return await get_faq_by_id(faq_id)
+
     query = """
-    mutation UpdateFAQ($id: Int!, $question: String!, $answer: String!, $category: String) {
+    mutation UpdateFAQ($id: Int!, $set: faqs_set_input!) {
         update_faqs_by_pk(
             pk_columns: {id: $id}
-            _set: {question: $question, answer: $answer, category: $category}
+            _set: $set
         ) {
             id
             question
             answer
             category
+            updated_at
         }
     }
     """
-    result = await hasura.execute(query, {
-        "id": faq_id,
-        "question": question,
-        "answer": answer,
-        "category": category
-    })
-    return result["update_faqs_by_pk"]
+    result = await hasura.execute(query, {"id": faq_id, "set": update_fields})
+    return result.get("update_faqs_by_pk")
 
 
 async def delete_faq(faq_id: int):
-    """Delete FAQ"""
     query = """
     mutation DeleteFAQ($id: Int!) {
         delete_faqs_by_pk(id: $id) {
@@ -295,14 +600,12 @@ async def delete_faq(faq_id: int):
     }
     """
     result = await hasura.execute(query, {"id": faq_id})
-    return result["delete_faqs_by_pk"]
+    return result.get("delete_faqs_by_pk")
 
 
 # ==================== PDF DOCUMENTS ====================
 
-
 async def pdf_exists_by_path(minio_path: str) -> bool:
-    """Check if a PDF document exists by its MinIO path"""
     query = """
     query PdfExists($minio_path: String!) {
         pdf_documents(where: {minio_path: {_eq: $minio_path}}, limit: 1) {
@@ -318,11 +621,10 @@ async def create_pdf_document(
     filename: str,
     minio_path: str,
     file_size: int,
-    description: str | None = None,
-    processing_status: str | None = None,
-    is_processed: int | None = None,
+    description: Optional[str] = None,
+    processing_status: Optional[str] = None,
+    is_processed: Optional[int] = None,
 ):
-    """Create a new PDF document record"""
     mutation = """
     mutation CreatePdf($object: pdf_documents_insert_input!) {
         insert_pdf_documents_one(object: $object) {
@@ -355,11 +657,10 @@ async def create_pdf_document(
         payload["is_processed"] = is_processed
 
     result = await hasura.execute(mutation, {"object": payload})
-    return result["insert_pdf_documents_one"]
+    return result.get("insert_pdf_documents_one")
 
 
 async def get_pdf_by_id(pdf_id: int):
-    """Fetch a single PDF document by ID"""
     query = """
     query GetPdf($id: Int!) {
         pdf_documents_by_pk(id: $id) {
@@ -382,7 +683,6 @@ async def get_pdf_by_id(pdf_id: int):
 
 
 async def get_all_pdfs():
-    """Fetch all PDF documents ordered by upload date"""
     query = """
     query GetPdfs {
         pdf_documents(order_by: {upload_date: desc}) {
@@ -405,7 +705,6 @@ async def get_all_pdfs():
 
 
 async def delete_pdf(pdf_id: int):
-    """Delete a PDF document record"""
     mutation = """
     mutation DeletePdf($id: Int!) {
         delete_pdf_documents_by_pk(id: $id) {
@@ -420,11 +719,10 @@ async def delete_pdf(pdf_id: int):
 async def update_pdf_processing_status(
     pdf_id: int,
     status: int,
-    status_message: str | None = None,
-    chunk_count: int | None = None,
-    embedding_count: int | None = None,
+    status_message: Optional[str] = None,
+    chunk_count: Optional[int] = None,
+    embedding_count: Optional[int] = None,
 ):
-    """Update PDF processing status and optional counters"""
     update_fields: dict[str, object] = {"is_processed": status}
 
     if status_message is not None:
