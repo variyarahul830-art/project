@@ -170,14 +170,20 @@ export async function getGraph() {
  * Send a question and get target nodes from the knowledge graph
  * @param {string} question - The user's question/source node text
  * @param {number} workflowId - The workflow ID
+ * @param {string} sessionId - Optional session ID for chat history
+ * @param {string} userId - Optional user ID for chat history
  * @returns {Promise} Promise with the target nodes
  */
-export async function chat(question, workflowId) {
+export async function chat(question, workflowId, sessionId = null, userId = null) {
   try {
+    const body = { question, workflow_id: workflowId };
+    if (sessionId) body.session_id = sessionId;
+    if (userId) body.user_id = userId;
+    
     const response = await fetch(`${API_BASE_URL}/api/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ question, workflow_id: workflowId }),
+      body: JSON.stringify(body),
     });
 
     if (!response.ok) {
@@ -193,14 +199,20 @@ export async function chat(question, workflowId) {
 /**
  * Send a direct chat message without session management
  * @param {string} question - The user's question
+ * @param {string} sessionId - Optional session ID for chat history
+ * @param {string} userId - Optional user ID for chat history
  * @returns {Promise} Promise with the response
  */
-export async function sendDirectChatMessage(question) {
+export async function sendDirectChatMessage(question, sessionId = null, userId = null) {
   try {
+    const body = { question };
+    if (sessionId) body.session_id = sessionId;
+    if (userId) body.user_id = userId;
+    
     const response = await fetch(`${API_BASE_URL}/api/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ question }),
+      body: JSON.stringify(body),
     });
 
     if (!response.ok) {

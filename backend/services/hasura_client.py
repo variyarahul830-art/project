@@ -749,3 +749,270 @@ async def update_pdf_processing_status(
 
     result = await hasura.execute(mutation, {"id": pdf_id, "set": update_fields})
     return result.get("update_pdf_documents_by_pk")
+
+
+# ==================== CHAT SESSIONS ====================
+
+async def create_chat_session(
+    session_id: str,
+    user_id: str,
+    title: str = "New Chat Session",
+    category: str = "General"
+):
+    """Create a new chat session"""
+    mutation = """
+    mutation CreateChatSession(
+        $sessionId: String!
+        $userId: String!
+        $title: String!
+        $category: String!
+    ) {
+        insert_chat_sessions_one(object: {
+            session_id: $sessionId
+            user_id: $userId
+            title: $title
+            category: $category
+        }) {
+            id
+            session_id
+            user_id
+            title
+            category
+            total_messages
+            is_active
+            created_at
+            updated_at
+        }
+    }
+    """
+    result = await hasura.execute(
+        mutation,
+        {
+            "sessionId": session_id,
+            "userId": user_id,
+            "title": title,
+            "category": category
+        }
+    )
+    return result.get("insert_chat_sessions_one")
+
+
+async def get_user_chat_sessions(user_id: str):
+    """Get all active chat sessions for a user"""
+    query = """
+    query GetUserChatSessions($userId: String!) {
+        chat_sessions(
+            where: {user_id: {_eq: $userId}, is_active: {_eq: true}}
+            order_by: {updated_at: desc}
+        ) {
+            id
+            session_id
+            user_id
+            title
+            category
+            total_messages
+            is_active
+            created_at
+            updated_at
+        }
+    }
+    """
+    result = await hasura.execute(query, {"userId": user_id})
+    return result.get("chat_sessions", [])
+
+
+async def get_chat_session(session_id: str):
+    """Get a specific chat session"""
+    query = """
+    query GetChatSession($sessionId: String!) {
+        chat_sessions(where: {session_id: {_eq: $sessionId}}) {
+            id
+            session_id
+            user_id
+            title
+            category
+            total_messages
+            is_active
+            created_at
+            updated_at
+        }
+    }
+    """
+    result = await hasura.execute(query, {"sessionId": session_id})
+    sessions = result.get("chat_sessions", [])
+    return sessions[0] if sessions else None
+
+
+async def get_chat_messages(session_id: str):
+    """Get all messages in a chat session"""
+    query = """
+    query GetChatMessages($sessionId: String!) {
+        chat_messages(
+            where: {session_id: {_eq: $sessionId}}
+            order_by: {timestamp: asc}
+        ) {
+            id
+            message_id
+            session_id
+            user_id
+            role
+            content
+            timestamp
+        }
+    }
+    """
+    result = await hasura.execute(query, {"sessionId": session_id})
+    return result.get("chat_messages", [])
+
+
+async def add_chat_message(
+    message_id: str,
+    session_id: str,
+    user_id: str,
+    question: str,
+    answer: str = None,
+    source: str = None
+):
+    """Add a question-answer pair to a chat session"""
+    logger.info(f"📝 add_chat_message called: session={session_id}, user={user_id}, msg_id={message_id}")
+    mutation = """
+    mutation AddChatMessage(
+        $messageId: String!
+        $sessionId: String!
+        $userId: String!
+        $question: String!
+        $answer: String
+        $source: String
+    ) {
+        insert_chat_messages_one(object: {
+            message_id: $messageId
+            session_id: $sessionId
+            user_id: $userId
+            question: $question
+            answer: $answer
+            source: $source
+        }) {
+            id
+            message_id
+            session_id
+            user_id
+            question
+            answer
+            source
+            timestamp
+        }
+    }
+    """
+    variables = {
+        "messageId": message_id,
+        "sessionId": session_id,
+        "userId": user_id,
+        "question": question,
+        "answer": answer,
+        "source": source
+    }
+    logger.info(f"📤 Executing mutation with variables: {variables}")
+    result = await hasura.execute(mutation, variables)
+    logger.info(f"📥 Got result: {result}")
+    message = result.get("insert_chat_messages_one")
+    
+    # Update session's total_messages count
+    if message:
+        logger.info(f"✅ Message saved successfully, updating session count...")
+        await update_session_message_count(session_id)
+    else:
+        logger.warning(f"⚠️  No message returned from insert operation")
+    
+    return message
+    
+    return message
+
+
+async def update_session_message_count(session_id: str):
+    """Update the total_messages count for a session"""
+    count_query = """
+    query CountSessionMessages($sessionId: String!) {
+        chat_messages_aggregate(where: {session_id: {_eq: $sessionId}}) {
+            aggregate {
+                count
+            }
+        }
+    }
+    """
+    count_result = await hasura.execute(count_query, {"sessionId": session_id})
+    total_messages = count_result.get("chat_messages_aggregate", {}).get("aggregate", {}).get("count", 0)
+    
+    update_mutation = """
+    mutation UpdateSessionMessageCount($sessionId: String!, $totalMessages: Int!) {
+        update_chat_sessions(
+            where: {session_id: {_eq: $sessionId}}
+            _set: {total_messages: $totalMessages}
+        ) {
+            affected_rows
+        }
+    }
+    """
+    await hasura.execute(
+        update_mutation,
+        {"sessionId": session_id, "totalMessages": total_messages}
+    )
+
+
+async def update_chat_session(session_id: str, title: str, category: str):
+    """Update a chat session's title and category"""
+    mutation = """
+    mutation UpdateChatSession($sessionId: String!, $title: String!, $category: String!) {
+        update_chat_sessions(
+            where: {session_id: {_eq: $sessionId}}
+            _set: {title: $title, category: $category}
+        ) {
+            affected_rows
+            returning {
+                id
+                session_id
+                title
+                category
+                updated_at
+            }
+        }
+    }
+    """
+    result = await hasura.execute(
+        mutation,
+        {"sessionId": session_id, "title": title, "category": category}
+    )
+    return result.get("update_chat_sessions", {}).get("returning", [])
+
+
+async def delete_chat_session(session_id: str):
+    """Soft delete a chat session (mark as inactive)"""
+    mutation = """
+    mutation DeleteChatSession($sessionId: String!) {
+        update_chat_sessions(
+            where: {session_id: {_eq: $sessionId}}
+            _set: {is_active: false}
+        ) {
+            affected_rows
+        }
+    }
+    """
+    result = await hasura.execute(mutation, {"sessionId": session_id})
+    return result.get("update_chat_sessions", {}).get("affected_rows", 0) > 0
+
+
+async def clear_chat_messages(session_id: str):
+    """Clear all messages from a chat session"""
+    delete_mutation = """
+    mutation ClearChatMessages($sessionId: String!) {
+        delete_chat_messages(where: {session_id: {_eq: $sessionId}}) {
+            affected_rows
+        }
+    }
+    """
+    result = await hasura.execute(delete_mutation, {"sessionId": session_id})
+    
+    # Reset total_messages count
+    if result.get("delete_chat_messages", {}).get("affected_rows", 0) > 0:
+        await update_session_message_count(session_id)
+    
+    return result.get("delete_chat_messages", {}).get("affected_rows", 0)

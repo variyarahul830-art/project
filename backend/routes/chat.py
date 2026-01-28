@@ -7,6 +7,8 @@ from services.milvus_service import MilvusService
 from services.llm_service import LLMService
 import logging
 import json
+import uuid
+from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +32,10 @@ async def chat(request: ChatRequest):
         logger.info(f"Processing question: {request.question}")
         logger.info(f"Searching across ALL workflows (workflow_id parameter ignored)")
         
+        # Initialize variables for saving to database
+        answer_text = None
+        source_type = None
+        
         # Step 1: Try exact match on source node (search ALL workflows)
         logger.info("Step 1: Trying exact text match on source nodes across ALL workflows...")
         source_node = await hasura_client.get_node_by_text(request.question, workflow_id=None)
@@ -50,7 +56,7 @@ async def chat(request: ChatRequest):
                         "is_source": is_source
                     })
                 
-                return {
+                response_data = {
                     "success": True,
                     "question": source_node["text"],
                     "answers": [node["text"] for node in target_nodes],
@@ -65,6 +71,27 @@ async def chat(request: ChatRequest):
                     "source": "knowledge_graph",
                     "count": len(target_nodes)
                 }
+                
+                # Save question and answer to chat history
+                if request.session_id and request.user_id:
+                    try:
+                        message_id = f"msg_{uuid.uuid4().hex[:16]}"
+                        logger.info(f"💾 Saving knowledge_graph message (session={request.session_id}, user={request.user_id})")
+                        await hasura_client.add_chat_message(
+                            message_id=message_id,
+                            session_id=request.session_id,
+                            user_id=request.user_id,
+                            question=request.question,
+                            answer=json.dumps(response_data),
+                            source="knowledge_graph"
+                        )
+                        logger.info(f"✅ Saved message {message_id}")
+                    except Exception as e:
+                        logger.error(f"❌ Failed to save chat message: {e}", exc_info=True)
+                else:
+                    logger.warning(f"⚠️  Skipping save - session_id={request.session_id}, user_id={request.user_id}")
+                
+                return response_data
         
         # Step 2: Try partial/fuzzy matching on all source nodes (search ALL workflows)
         logger.info("Step 2: Trying partial text match on source nodes across ALL workflows...")
@@ -98,7 +125,7 @@ async def chat(request: ChatRequest):
                         "is_source": is_source
                     })
                 
-                return {
+                response_data = {
                     "success": True,
                     "question": request.question,
                     "answers": [node["text"] for node in unique_targets],
@@ -113,6 +140,23 @@ async def chat(request: ChatRequest):
                     "source": "knowledge_graph",
                     "count": len(unique_targets)
                 }
+                
+                # Save question and answer to chat history
+                if request.session_id and request.user_id:
+                    try:
+                        message_id = f"msg_{uuid.uuid4().hex[:16]}"
+                        await hasura_client.add_chat_message(
+                            message_id=message_id,
+                            session_id=request.session_id,
+                            user_id=request.user_id,
+                            question=request.question,
+                            answer=json.dumps(response_data),
+                            source="knowledge_graph"
+                        )
+                    except Exception as e:
+                        logger.warning(f"Failed to save chat message: {e}")
+                
+                return response_data
             else:
                 logger.info("Partial match found source nodes, but they have no target connections")
         
@@ -122,7 +166,7 @@ async def chat(request: ChatRequest):
         
         if faq_exact:
             logger.info(f"✅ Found exact FAQ match")
-            return {
+            response_data = {
                 "success": True,
                 "question": request.question,
                 "answer": faq_exact["answer"],
@@ -130,6 +174,23 @@ async def chat(request: ChatRequest):
                 "faq_id": faq_exact["id"],
                 "category": faq_exact.get("category")
             }
+            
+            # Save question and answer to chat history
+            if request.session_id and request.user_id:
+                try:
+                    message_id = f"msg_{uuid.uuid4().hex[:16]}"
+                    await hasura_client.add_chat_message(
+                        message_id=message_id,
+                        session_id=request.session_id,
+                        user_id=request.user_id,
+                        question=request.question,
+                        answer=faq_exact["answer"],
+                        source="faq"
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to save chat message: {e}")
+            
+            return response_data
         
         # Try partial FAQ match
         faq_partial = await hasura_client.search_faq_partial(request.question)
@@ -137,7 +198,7 @@ async def chat(request: ChatRequest):
             logger.info(f"✅ Found {len(faq_partial)} partial FAQ matches")
             # Return the first (most relevant) partial match
             best_faq = faq_partial[0]
-            return {
+            response_data = {
                 "success": True,
                 "question": request.question,
                 "answer": best_faq["answer"],
@@ -146,6 +207,23 @@ async def chat(request: ChatRequest):
                 "category": best_faq.get("category"),
                 "match_type": "partial"
             }
+            
+            # Save question and answer to chat history
+            if request.session_id and request.user_id:
+                try:
+                    message_id = f"msg_{uuid.uuid4().hex[:16]}"
+                    await hasura_client.add_chat_message(
+                        message_id=message_id,
+                        session_id=request.session_id,
+                        user_id=request.user_id,
+                        question=request.question,
+                        answer=best_faq["answer"],
+                        source="faq"
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to save chat message: {e}")
+            
+            return response_data
         
         logger.info("No FAQs found, trying RAG approach with PDF embeddings")
         
@@ -220,7 +298,7 @@ async def chat(request: ChatRequest):
         logger.info("✅ Answer generated successfully")
         
         # Return answer with source information
-        return {
+        response_data = {
             "success": True,
             "question": request.question,
             "answer": answer,
@@ -234,6 +312,27 @@ async def chat(request: ChatRequest):
                 } for chunk in similar_chunks
             ]
         }
+        
+        # Save question and answer to chat history
+        if request.session_id and request.user_id:
+            try:
+                message_id = f"msg_{uuid.uuid4().hex[:16]}"
+                logger.info(f"💾 Saving RAG message (session={request.session_id}, user={request.user_id})")
+                await hasura_client.add_chat_message(
+                    message_id=message_id,
+                    session_id=request.session_id,
+                    user_id=request.user_id,
+                    question=request.question,
+                    answer=answer,
+                    source="rag"
+                )
+                logger.info(f"✅ RAG message saved")
+            except Exception as e:
+                logger.error(f"❌ Failed to save RAG chat message: {e}", exc_info=True)
+        else:
+            logger.warning(f"⚠️  Skipping RAG save - session_id={request.session_id}, user_id={request.user_id}")
+        
+        return response_data
     
     except Exception as e:
         logger.error(f"❌ Error processing question: {str(e)}", exc_info=True)

@@ -1,8 +1,13 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+import Link from 'next/link';
+import { usePathname } from 'next/navigation';
 
 export default function Sidebar({ activeMode, onModeChange }) {
+  const pathname = usePathname();
+  const isHistoryPage = pathname === '/history';
+
   return (
     <aside className="sidebar">
       <div className="sidebar-header">
@@ -19,6 +24,17 @@ export default function Sidebar({ activeMode, onModeChange }) {
           <span className="icon">💬</span>
           <span className="label">Chat</span>
         </button>
+
+        <Link href="/history" style={{ textDecoration: 'none', width: '100%' }}>
+          <button
+            className={`nav-btn ${isHistoryPage ? 'active' : ''}`}
+            title="View chat history"
+            style={{ width: '100%' }}
+          >
+            <span className="icon">📜</span>
+            <span className="label">History</span>
+          </button>
+        </Link>
 
         <button
           onClick={() => onModeChange('builder')}

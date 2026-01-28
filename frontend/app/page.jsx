@@ -1,6 +1,7 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+import { useSearchParams } from 'next/navigation';
 import Sidebar from './components/Sidebar';
 import ChatBox from './components/ChatBox';
 import GraphBuilderWrapper from './components/GraphBuilderWrapper';
@@ -8,6 +9,9 @@ import PDFUpload from './components/PDFUpload';
 import FAQManagement from './components/FAQManagement';
 
 export default function Home() {
+  const searchParams = useSearchParams();
+  const continueSessionId = searchParams.get('continue');
+  
   const [activeMode, setActiveMode] = useState('chat');
   const [currentWorkflowId, setCurrentWorkflowId] = useState(null);
 
@@ -16,7 +20,7 @@ export default function Home() {
       <Sidebar activeMode={activeMode} onModeChange={setActiveMode} />
 
       <main className="main-content">
-        {activeMode === 'chat' && <ChatBox workflowId={currentWorkflowId} />}
+        {activeMode === 'chat' && <ChatBox workflowId={currentWorkflowId} continueSessionId={continueSessionId} />}
         {activeMode === 'builder' && <GraphBuilderWrapper workflowId={currentWorkflowId} onWorkflowChange={setCurrentWorkflowId} />}
         {activeMode === 'pdf' && <PDFUpload />}
         {activeMode === 'faq' && <FAQManagement />}

@@ -88,3 +88,43 @@ CREATE INDEX IF NOT EXISTS idx_pdf_documents_filename ON pdf_documents(filename)
 CREATE INDEX IF NOT EXISTS idx_pdf_documents_upload_date ON pdf_documents(upload_date DESC);
 CREATE INDEX IF NOT EXISTS idx_pdf_documents_is_processed ON pdf_documents(is_processed);
 CREATE INDEX IF NOT EXISTS idx_pdf_documents_minio_path ON pdf_documents(minio_path);
+
+-- ==================== CHAT SESSIONS TABLE ====================
+CREATE TABLE IF NOT EXISTS chat_sessions (
+    id SERIAL PRIMARY KEY,
+    session_id VARCHAR(255) NOT NULL UNIQUE,
+    user_id VARCHAR(255) NOT NULL,
+    title VARCHAR(500) DEFAULT 'New Chat Session',
+    category VARCHAR(255) DEFAULT 'General',
+    total_messages INTEGER DEFAULT 0,
+    is_active BOOLEAN DEFAULT true,
+    created_at TIMESTAMP DEFAULT NOW(),
+    updated_at TIMESTAMP DEFAULT NOW()
+);
+
+-- Create indexes for chat_sessions
+CREATE INDEX IF NOT EXISTS idx_chat_sessions_user_id ON chat_sessions(user_id);
+CREATE INDEX IF NOT EXISTS idx_chat_sessions_session_id ON chat_sessions(session_id);
+CREATE INDEX IF NOT EXISTS idx_chat_sessions_created_at ON chat_sessions(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_chat_sessions_is_active ON chat_sessions(is_active);
+
+-- ==================== CHAT MESSAGES TABLE ====================
+-- Drop old table if exists
+DROP TABLE IF EXISTS chat_messages CASCADE;
+
+CREATE TABLE chat_messages (
+    id SERIAL PRIMARY KEY,
+    message_id VARCHAR(255) NOT NULL UNIQUE,
+    session_id VARCHAR(255) NOT NULL REFERENCES chat_sessions(session_id) ON DELETE CASCADE,
+    user_id VARCHAR(255) NOT NULL,
+    question TEXT NOT NULL,
+    answer TEXT,
+    source VARCHAR(50),
+    timestamp TIMESTAMP DEFAULT NOW()
+);
+
+-- Create indexes for chat_messages
+CREATE INDEX IF NOT EXISTS idx_chat_messages_session_id ON chat_messages(session_id);
+CREATE INDEX IF NOT EXISTS idx_chat_messages_user_id ON chat_messages(user_id);
+CREATE INDEX IF NOT EXISTS idx_chat_messages_timestamp ON chat_messages(timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_chat_messages_message_id ON chat_messages(message_id);

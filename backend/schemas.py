@@ -69,6 +69,8 @@ class ChatRequest(BaseModel):
     """Schema for chat request"""
     question: str = Field(..., min_length=1, description="User's question/source node text")
     workflow_id: Optional[int] = Field(None, description="Workflow ID (optional - if not provided, searches across all workflows)")
+    session_id: Optional[str] = Field(None, description="Chat session ID for history tracking")
+    user_id: Optional[str] = Field(None, description="User ID for session tracking")
 
 class ChatResponse(BaseModel):
     """Schema for chat response"""
@@ -139,8 +141,3 @@ class FAQResponse(FAQBase):
     
     class Config:
         from_attributes = True
-
-class ChatRequest(BaseModel):
-    """Schema for chat request"""
-    question: str
-    workflow_id: Optional[int] = None
