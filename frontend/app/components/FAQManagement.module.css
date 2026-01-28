@@ -1,10 +1,11 @@
 .container {
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background: #f8f9fa;
   border-radius: 12px;
   padding: 2rem;
   margin: 1rem 0;
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
-  color: #fff;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
+  color: #1a1a1a;
+  border: 1px solid #e0e0e0;
 }
 
 .header {
@@ -18,10 +19,11 @@
   margin: 0;
   font-size: 1.8rem;
   font-weight: 700;
+  color: #1a1a1a;
 }
 
 .addBtn {
-  background: #10b981;
+  background: #2c3e50;
   color: white;
   border: none;
   padding: 0.75rem 1.5rem;
@@ -30,13 +32,13 @@
   font-size: 1rem;
   font-weight: 600;
   transition: all 0.3s ease;
-  box-shadow: 0 4px 15px rgba(16, 185, 129, 0.3);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
 }
 
 .addBtn:hover:not(:disabled) {
-  background: #059669;
+  background: #1a252f;
   transform: translateY(-2px);
-  box-shadow: 0 6px 20px rgba(16, 185, 129, 0.4);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
 }
 
 .addBtn:disabled {
@@ -45,53 +47,56 @@
 }
 
 .filterSection {
-  background: rgba(255, 255, 255, 0.1);
+  background: #ffffff;
   padding: 1rem;
   border-radius: 8px;
   margin-bottom: 2rem;
-  backdrop-filter: blur(10px);
+  border: 1px solid #e0e0e0;
 }
 
 .filterSection label {
   display: block;
   margin-bottom: 0.5rem;
   font-weight: 600;
+  color: #1a1a1a;
 }
 
 .categorySelect {
   width: 100%;
   padding: 0.75rem;
-  border: 2px solid rgba(255, 255, 255, 0.3);
+  border: 2px solid #e0e0e0;
   border-radius: 6px;
-  background: rgba(255, 255, 255, 0.05);
-  color: #fff;
+  background: #ffffff;
+  color: #1a1a1a;
   font-size: 1rem;
   cursor: pointer;
 }
 
 .categorySelect:focus {
   outline: none;
-  border-color: rgba(255, 255, 255, 0.7);
-  background: rgba(255, 255, 255, 0.1);
+  border-color: #2c3e50;
+  background: #ffffff;
+  box-shadow: 0 0 0 3px rgba(44, 62, 80, 0.1);
 }
 
 .categorySelect option {
-  background: #333;
-  color: #fff;
+  background: #ffffff;
+  color: #1a1a1a;
 }
 
 .formContainer {
-  background: rgba(0, 0, 0, 0.2);
+  background: #ffffff;
   padding: 2rem;
   border-radius: 8px;
   margin-bottom: 2rem;
-  backdrop-filter: blur(10px);
+  border: 1px solid #e0e0e0;
 }
 
 .formContainer h3 {
   margin-top: 0;
   margin-bottom: 1.5rem;
   font-size: 1.5rem;
+  color: #1a1a1a;
 }
 
 .form {
@@ -109,15 +114,16 @@
   margin-bottom: 0.5rem;
   font-weight: 600;
   font-size: 0.95rem;
+  color: #1a1a1a;
 }
 
 .input,
 .textarea {
   padding: 0.75rem;
-  border: 2px solid rgba(255, 255, 255, 0.3);
+  border: 2px solid #e0e0e0;
   border-radius: 6px;
-  background: rgba(255, 255, 255, 0.05);
-  color: #fff;
+  background: #ffffff;
+  color: #1a1a1a;
   font-size: 1rem;
   font-family: inherit;
   transition: all 0.3s ease;
@@ -125,15 +131,15 @@
 
 .input::placeholder,
 .textarea::placeholder {
-  color: rgba(255, 255, 255, 0.6);
+  color: #999;
 }
 
 .input:focus,
 .textarea:focus {
   outline: none;
-  border-color: rgba(255, 255, 255, 0.7);
-  background: rgba(255, 255, 255, 0.1);
-  box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.1);
+  border-color: #2c3e50;
+  background: #ffffff;
+  box-shadow: 0 0 0 3px rgba(44, 62, 80, 0.1);
 }
 
 .textarea {
@@ -160,15 +166,15 @@
 }
 
 .submitBtn {
-  background: #10b981;
+  background: #2c3e50;
   color: white;
-  box-shadow: 0 4px 15px rgba(16, 185, 129, 0.3);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
 }
 
 .submitBtn:hover:not(:disabled) {
-  background: #059669;
+  background: #1a252f;
   transform: translateY(-2px);
-  box-shadow: 0 6px 20px rgba(16, 185, 129, 0.4);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
 }
 
 .submitBtn:disabled {
@@ -177,40 +183,42 @@
 }
 
 .cancelBtn {
-  background: rgba(255, 255, 255, 0.2);
-  color: white;
+  background: #e0e0e0;
+  color: #1a1a1a;
 }
 
 .cancelBtn:hover {
-  background: rgba(255, 255, 255, 0.3);
+  background: #c0c0c0;
 }
 
 .faqsList {
-  background: rgba(0, 0, 0, 0.1);
+  background: #ffffff;
   padding: 2rem;
   border-radius: 8px;
-  backdrop-filter: blur(10px);
+  border: 1px solid #e0e0e0;
 }
 
 .faqsList h3 {
   margin-top: 0;
   margin-bottom: 1.5rem;
   font-size: 1.3rem;
+  color: #1a1a1a;
 }
 
 .noData {
   text-align: center;
   padding: 2rem;
-  opacity: 0.8;
+  color: #666;
   font-style: italic;
 }
 
 .faqItem {
-  background: rgba(255, 255, 255, 0.05);
+  background: #f8f9fa;
   padding: 1.5rem;
   margin-bottom: 1rem;
   border-radius: 8px;
-  border-left: 4px solid #10b981;
+  border: 1px solid #e0e0e0;
+  border-left: 4px solid #2c3e50;
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
@@ -219,8 +227,9 @@
 }
 
 .faqItem:hover {
-  background: rgba(255, 255, 255, 0.1);
+  background: #f0f1f3;
   transform: translateX(4px);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
 }
 
 .faqContent {
@@ -239,11 +248,12 @@
   margin: 0;
   font-size: 1.1rem;
   font-weight: 600;
+  color: #1a1a1a;
 }
 
 .category {
-  background: rgba(16, 185, 129, 0.2);
-  color: #10b981;
+  background: #e8eef7;
+  color: #2c3e50;
   padding: 0.25rem 0.75rem;
   border-radius: 20px;
   font-size: 0.85rem;
@@ -254,13 +264,13 @@
 .faqContent p {
   margin: 0.5rem 0;
   line-height: 1.6;
-  opacity: 0.95;
+  color: #333;
 }
 
 .timestamp {
   display: block;
   margin-top: 0.75rem;
-  opacity: 0.7;
+  color: #666;
   font-size: 0.85rem;
 }
 
@@ -281,24 +291,24 @@
 }
 
 .editBtn {
-  background: rgba(59, 130, 246, 0.3);
-  color: #60a5fa;
-  border: 1px solid rgba(59, 130, 246, 0.5);
+  background: #e8eef7;
+  color: #2c3e50;
+  border: 1px solid #d0dce8;
 }
 
 .editBtn:hover {
-  background: rgba(59, 130, 246, 0.5);
+  background: #d0dce8;
   transform: scale(1.1);
 }
 
 .deleteBtn {
-  background: rgba(239, 68, 68, 0.3);
-  color: #f87171;
-  border: 1px solid rgba(239, 68, 68, 0.5);
+  background: #f5e8e8;
+  color: #c13030;
+  border: 1px solid #e8d0d0;
 }
 
 .deleteBtn:hover {
-  background: rgba(239, 68, 68, 0.5);
+  background: #e8d0d0;
   transform: scale(1.1);
 }
 
