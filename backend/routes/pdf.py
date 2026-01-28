@@ -116,13 +116,13 @@ async def process_pdf_async(pdf_id: int, file_content: bytes, filename: str):
         try:
             # Use the streaming chunk generator to process chunks as they're created
             logger.info(f"[PDF {pdf_id}] Creating streaming generator for {len(pages_data)} pages...")
-            chunk_generator = text_chunker.chunk_documents_streaming(pages_data)
+            chunk_generator = text_chunker.chunk_documents_with_cross_page_overlap_streaming(pages_data)
             logger.info(f"[PDF {pdf_id}] Generator created, starting to iterate through chunks...")
             
             chunk_count = 0
             for chunk in chunk_generator:
                 chunk_count += 1
-                logger.info(f"[PDF {pdf_id}] ✓ Chunk #{chunk_count} created (global_index: {chunk['global_chunk_index']}, page: {chunk['page_number']}, size: {len(chunk['text'])} chars)")
+                logger.info(f"[PDF {pdf_id}] ✓ Chunk #{chunk_count} created (chunk_index: {chunk['chunk_index']}, pages: {chunk['page_numbers']}, spans_multiple: {chunk['spans_multiple_pages']}, size: {len(chunk['text'])} chars)")
                 chunk_batch.append(chunk)
                 
                 # When batch is full or this is the last chunk, process and insert
@@ -148,8 +148,8 @@ async def process_pdf_async(pdf_id: int, file_content: bytes, filename: str):
                             'embedding': embeddings[i],
                             'text_chunk': chunk['text'],
                             'document_name': filename,
-                            'page_number': chunk['page_number'],
-                            'chunk_index': chunk['global_chunk_index'],
+                            'page_number': chunk['page_numbers'][0] if chunk['page_numbers'] else 1,  # Use first page if spans multiple
+                            'chunk_index': chunk['chunk_index'],
                             'token_count': chunk['token_count'],
                         })
                     
@@ -201,8 +201,8 @@ async def process_pdf_async(pdf_id: int, file_content: bytes, filename: str):
                         'embedding': embeddings[i],
                         'text_chunk': chunk['text'],
                         'document_name': filename,
-                        'page_number': chunk['page_number'],
-                        'chunk_index': chunk['global_chunk_index'],
+                        'page_number': chunk['page_numbers'][0] if chunk['page_numbers'] else 1,  # Use first page if spans multiple
+                        'chunk_index': chunk['chunk_index'],
                         'token_count': chunk['token_count'],
                     })
                 

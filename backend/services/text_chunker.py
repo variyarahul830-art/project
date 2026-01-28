@@ -3,6 +3,8 @@ Text Chunking Service
 Splits text into overlapping chunks based on token count
 """
 
+
+
 import tiktoken
 from typing import List, Dict, Any
 import logging
@@ -161,3 +163,146 @@ class TextChunker:
                 global_chunk_index += 1
         
         logger.info(f"[TextChunker] Streaming generation complete. Total chunks yielded: {global_chunk_index}")
+    
+    def chunk_documents_with_cross_page_overlap(self, pages_data: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """
+        Chunk multiple pages with overlap that can span across page boundaries
+        
+        This method allows chunks to overlap across page boundaries, unlike the standard
+        chunk_documents method which resets overlap for each new page.
+        
+        Args:
+            pages_data: List of dicts with 'text', 'page_number', 'page_count'
+            
+        Returns:
+            List of chunked data with metadata including page_numbers that chunk spans
+        """
+        # Concatenate all text and track page boundaries
+        all_tokens = []
+        page_boundaries = []  # Track where each page starts in token stream
+        
+        logger.info(f"[chunk_documents_with_cross_page_overlap] Starting cross-page overlap chunking for {len(pages_data)} pages...")
+        
+        for page_data in pages_data:
+            page_boundaries.append(len(all_tokens))
+            tokens = self.encoding.encode(page_data['text'])
+            all_tokens.extend(tokens)
+            logger.info(f"[chunk_documents_with_cross_page_overlap] Page {page_data['page_number']}: {len(tokens)} tokens (boundary at {page_boundaries[-1]})")
+        
+        logger.info(f"[chunk_documents_with_cross_page_overlap] Total tokens: {len(all_tokens)}")
+        
+        # Now chunk the entire token stream with overlap that spans pages
+        chunks = []
+        chunk_index = 0
+        start_idx = 0
+        iteration = 0
+        max_iterations = len(all_tokens) * 2
+        
+        while start_idx < len(all_tokens):
+            iteration += 1
+            
+            if iteration > max_iterations:
+                logger.error(f"[chunk_documents_with_cross_page_overlap] Max iterations ({max_iterations}) exceeded! Breaking loop.")
+                break
+            
+            end_idx = min(start_idx + self.chunk_size, len(all_tokens))
+            chunk_tokens = all_tokens[start_idx:end_idx]
+            chunk_text = self.encoding.decode(chunk_tokens)
+            
+            # Determine which page(s) this chunk belongs to
+            pages_in_chunk = []
+            for i, boundary in enumerate(page_boundaries):
+                next_boundary = page_boundaries[i + 1] if i + 1 < len(page_boundaries) else len(all_tokens)
+                if start_idx < next_boundary and end_idx > boundary:
+                    pages_in_chunk.append(pages_data[i]['page_number'])
+            
+            if chunk_text.strip():
+                chunks.append({
+                    'text': chunk_text,
+                    'chunk_index': chunk_index,
+                    'page_numbers': pages_in_chunk,  # Can span multiple pages
+                    'token_count': len(chunk_tokens),
+                    'spans_multiple_pages': len(pages_in_chunk) > 1
+                })
+                logger.info(f"[chunk_documents_with_cross_page_overlap] Chunk {chunk_index}: pages {pages_in_chunk}, {len(chunk_tokens)} tokens, spans_multiple={len(pages_in_chunk) > 1}")
+                chunk_index += 1
+            
+            if end_idx >= len(all_tokens):
+                logger.info(f"[chunk_documents_with_cross_page_overlap] Reached end of tokens at iteration {iteration}")
+                break
+            
+            start_idx = end_idx - self.chunk_overlap
+        
+        logger.info(f"[chunk_documents_with_cross_page_overlap] Complete. Created {len(chunks)} chunks across {len(pages_data)} pages")
+        return chunks
+    
+    def chunk_documents_with_cross_page_overlap_streaming(self, pages_data: List[Dict[str, Any]]):
+        """
+        Generator that yields chunks with cross-page overlap as they are created (streaming)
+        
+        Allows processing chunks immediately without waiting for all chunks to be ready.
+        Chunks can overlap across page boundaries.
+        
+        Args:
+            pages_data: List of dicts with 'text', 'page_number', 'page_count'
+            
+        Yields:
+            Dict with chunked data and metadata including page_numbers that chunk spans
+        """
+        # Concatenate all text and track page boundaries
+        all_tokens = []
+        page_boundaries = []  # Track where each page starts in token stream
+        
+        logger.info(f"[chunk_documents_with_cross_page_overlap_streaming] Starting streaming cross-page overlap chunking for {len(pages_data)} pages...")
+        
+        for page_data in pages_data:
+            page_boundaries.append(len(all_tokens))
+            tokens = self.encoding.encode(page_data['text'])
+            all_tokens.extend(tokens)
+            logger.info(f"[chunk_documents_with_cross_page_overlap_streaming] Page {page_data['page_number']}: {len(tokens)} tokens (boundary at {page_boundaries[-1]})")
+        
+        logger.info(f"[chunk_documents_with_cross_page_overlap_streaming] Total tokens: {len(all_tokens)}")
+        
+        # Now chunk the entire token stream with overlap that spans pages
+        chunk_index = 0
+        start_idx = 0
+        iteration = 0
+        max_iterations = len(all_tokens) * 2
+        
+        while start_idx < len(all_tokens):
+            iteration += 1
+            
+            if iteration > max_iterations:
+                logger.error(f"[chunk_documents_with_cross_page_overlap_streaming] Max iterations ({max_iterations}) exceeded! Breaking loop.")
+                break
+            
+            end_idx = min(start_idx + self.chunk_size, len(all_tokens))
+            chunk_tokens = all_tokens[start_idx:end_idx]
+            chunk_text = self.encoding.decode(chunk_tokens)
+            
+            # Determine which page(s) this chunk belongs to
+            pages_in_chunk = []
+            for i, boundary in enumerate(page_boundaries):
+                next_boundary = page_boundaries[i + 1] if i + 1 < len(page_boundaries) else len(all_tokens)
+                if start_idx < next_boundary and end_idx > boundary:
+                    pages_in_chunk.append(pages_data[i]['page_number'])
+            
+            if chunk_text.strip():
+                chunk = {
+                    'text': chunk_text,
+                    'chunk_index': chunk_index,
+                    'page_numbers': pages_in_chunk,  # Can span multiple pages
+                    'token_count': len(chunk_tokens),
+                    'spans_multiple_pages': len(pages_in_chunk) > 1
+                }
+                logger.info(f"[chunk_documents_with_cross_page_overlap_streaming] Yielding chunk {chunk_index}: pages {pages_in_chunk}, {len(chunk_tokens)} tokens, spans_multiple={len(pages_in_chunk) > 1}")
+                yield chunk
+                chunk_index += 1
+            
+            if end_idx >= len(all_tokens):
+                logger.info(f"[chunk_documents_with_cross_page_overlap_streaming] Reached end of tokens at iteration {iteration}")
+                break
+            
+            start_idx = end_idx - self.chunk_overlap
+        
+        logger.info(f"[chunk_documents_with_cross_page_overlap_streaming] Complete. Total chunks yielded: {chunk_index}")
