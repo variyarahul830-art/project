@@ -3,8 +3,6 @@ Text Chunking Service
 Splits text into overlapping chunks based on token count
 """
 
-
-
 import tiktoken
 from typing import List, Dict, Any
 import logging

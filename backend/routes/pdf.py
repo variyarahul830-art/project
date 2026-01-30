@@ -1,4 +1,5 @@
 from fastapi import APIRouter, HTTPException, UploadFile, File, Form, status, BackgroundTasks
+from fastapi.responses import StreamingResponse
 from minio import Minio
 from minio.error import S3Error
 from config import settings
@@ -392,7 +393,8 @@ async def delete_pdf(pdf_id: int):
 @router.get("/documents/{pdf_id}/download")
 async def download_pdf(pdf_id: int):
     """
-    Get download link for a PDF document
+    Stream PDF file directly from MinIO through the backend
+    This avoids presigned URL hostname issues in Docker environments
     """
     pdf = await hasura_client.get_pdf_by_id(pdf_id)
     if not pdf:
@@ -405,24 +407,30 @@ async def download_pdf(pdf_id: int):
         # Extract filename from minio_path
         minio_filename = pdf.get("minio_path", "").split('/')[-1]
         
-        # Generate presigned URL for download (valid for 7 days)
-        url = minio_client.get_presigned_url(
-            "GET",
+        # Get the file from MinIO
+        response = minio_client.get_object(
             settings.MINIO_BUCKET_NAME,
-            minio_filename,
-            expires=timedelta(days=7)
+            minio_filename
         )
         
-        return {
-            "success": True,
-            "download_url": url,
-            "filename": pdf.get("filename")
-        }
+        # Stream the file to the client
+        return StreamingResponse(
+            response.stream(32*1024),  # 32KB chunks
+            media_type="application/pdf",
+            headers={
+                "Content-Disposition": f'attachment; filename="{pdf.get("filename")}"'
+            }
+        )
         
     except S3Error as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error generating download link: {str(e)}"
+            detail=f"Error downloading file: {str(e)}"
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Unexpected error: {str(e)}"
         )
 
 

@@ -140,23 +140,35 @@ export async function deletePDF(pdfId) {
 }
 
 /**
- * Get a download link for a PDF document
+ * Download a PDF document directly
  * @param {number} pdfId - The PDF document ID
  */
-export async function getPDFDownloadLink(pdfId) {
+export async function downloadPDF(pdfId) {
   try {
     const response = await fetch(`${API_BASE_URL}/api/pdf/documents/${pdfId}/download`, {
       method: 'GET',
-      headers: { 'Content-Type': 'application/json' },
     });
 
     if (!response.ok) {
       const error = await response.json().catch(() => ({}));
-      throw new Error(error.detail || `Failed to get download link: ${response.statusText}`);
+      throw new Error(error.detail || `Failed to download PDF: ${response.statusText}`);
     }
 
-    return await response.json();
+    // Get filename from Content-Disposition header
+    const contentDisposition = response.headers.get('Content-Disposition');
+    let filename = 'document.pdf';
+    if (contentDisposition) {
+      const matches = /filename="([^"]+)"/.exec(contentDisposition);
+      if (matches && matches[1]) {
+        filename = matches[1];
+      }
+    }
+
+    return {
+      blob: await response.blob(),
+      filename: filename
+    };
   } catch (error) {
-    throw new Error(error instanceof Error ? error.message : 'Failed to get download link');
+    throw new Error(error instanceof Error ? error.message : 'Failed to download PDF');
   }
 }

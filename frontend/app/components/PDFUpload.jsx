@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { uploadPDF, getPDFDocuments, deletePDF, getPDFDownloadLink } from '../services/api';
+import { uploadPDF, getPDFDocuments, deletePDF, downloadPDF } from '../services/api';
 
 export default function PDFUpload() {
   const [file, setFile] = useState(null);
@@ -90,17 +90,19 @@ export default function PDFUpload() {
   const handleDownload = async (pdfId, filename) => {
     try {
       setError(null);
-      const data = await getPDFDownloadLink(pdfId);
-      if (data.download_url) {
-        // Create a temporary anchor element and trigger download
-        const link = document.createElement('a');
-        link.href = data.download_url;
-        link.download = filename || data.filename || 'document.pdf';
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-        setMessage(`✓ Downloading: ${filename}`);
-      }
+      const { blob, filename: downloadFilename } = await downloadPDF(pdfId);
+      
+      // Create a blob URL and trigger download
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = filename || downloadFilename || 'document.pdf';
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(url);
+      
+      setMessage(`✓ Downloaded: ${filename || downloadFilename}`);
     } catch (err) {
       setError(err.message || 'Failed to download PDF');
     }
