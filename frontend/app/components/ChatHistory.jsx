@@ -124,6 +124,13 @@ export default function ChatHistory({ userId = 'user123' }) {
   return (
     <div className={styles.historyContainer}>
       <div className={styles.header}>
+        <button 
+          onClick={() => window.history.back()}
+          className={styles.backButton}
+          title="Back to Dashboard"
+        >
+          ← Back
+        </button>
         <h1>Chat History</h1>
         <p>View your previous conversations</p>
       </div>

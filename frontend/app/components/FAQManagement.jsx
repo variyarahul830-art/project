@@ -88,7 +88,12 @@ export default function FAQManagement() {
       alert('FAQ saved successfully!');
     } catch (error) {
       console.error('Error saving FAQ:', error);
-      alert('Error saving FAQ: ' + error.message);
+      // Check for duplicate question error
+      if (error.message.includes('duplicate') || error.message.includes('unique')) {
+        alert('❌ This question already exists! Please use a different question.');
+      } else {
+        alert('Error saving FAQ: ' + error.message);
+      }
     }
     setLoading(false);
   };

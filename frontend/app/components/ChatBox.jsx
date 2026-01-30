@@ -1,201 +1,258 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { useSearchParams } from 'next/navigation';
+import { useSearchParams, useRouter } from 'next/navigation';
 import { sendDirectChatMessage } from '../services/api';
 import { createChatSession, getChatMessages, getChatSession, updateChatSession } from '../services/hasura';
 import Message from './Message';
 
 export default function ChatBox({ workflowId, userId = 'user123', continueSessionId = null }) {
   const searchParams = useSearchParams();
-  const urlContinueSessionId = searchParams.get('continue') || continueSessionId;
+  const router = useRouter();
+  const urlSessionId = searchParams.get('continue') || continueSessionId;
   
+  // ==================== STATE ====================
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [sessionId, setSessionId] = useState(null);
-  const [sessionTitle, setSessionTitle] = useState('Chat Session');
+  const [sessionTitle, setSessionTitle] = useState('New Chat');
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const [editTitleValue, setEditTitleValue] = useState('');
 
-  // Create or load session on mount
-  useEffect(() => {
-    const initSession = async () => {
-      try {
-        if (urlContinueSessionId) {
-          // Load existing session
-          const sessionResult = await getChatSession(urlContinueSessionId);
-          if (sessionResult.chat_sessions && sessionResult.chat_sessions.length > 0) {
-            const session = sessionResult.chat_sessions[0];
-            setSessionId(session.session_id);
-            setSessionTitle(session.title);
-            
-            // Load messages for this session
-            const messagesResult = await getChatMessages(urlContinueSessionId);
-            if (messagesResult.chat_messages) {
-              // Convert stored messages to display format with separate user and bot messages
-              const displayMessages = [];
-              messagesResult.chat_messages.forEach(msg => {
-                // Add user question
-                displayMessages.push({
-                  type: 'user',
-                  text: msg.question
-                });
-                
-                // Add bot answer if it exists
-                if (msg.answer) {
-                  // Try to parse answer if it's JSON
-                  let answerText = msg.answer;
-                  let answers = [];
-                  let targetNodes = [];
-                  let source = msg.source || 'unknown';
-                  
-                  try {
-                    const parsed = JSON.parse(msg.answer);
-                    // Extract only the meaningful answer, not the entire JSON
-                    if (parsed.answers && parsed.answers.length > 0) {
-                      // Knowledge graph response - show answers
-                      answers = parsed.answers;
-                      targetNodes = parsed.target_nodes || [];
-                      answerText = '';
-                    } else if (parsed.answer) {
-                      // FAQ or RAG response - show answer text
-                      answerText = parsed.answer;
-                    } else {
-                      // Fallback
-                      answerText = JSON.stringify(parsed);
-                    }
-                    if (parsed.source) source = parsed.source;
-                  } catch (e) {
-                    // Not JSON, keep as is
-                    answerText = msg.answer;
-                  }
-                  
-                  displayMessages.push({
-                    type: 'bot',
-                    text: answerText,
-                    answers: answers,
-                    targetNodes: targetNodes,
-                    source: source
-                  });
-                }
-              });
-              setMessages(displayMessages);
-            }
-          }
-        } else {
-          // Don't create session until first message is sent
-          // This prevents empty sessions from being created
-        }
-      } catch (err) {
-        console.error('Failed to initialize session:', err);
-      }
-    };
-    initSession();
-  }, [userId, urlContinueSessionId]);
-
-  const sendMessage = async (messageText) => {
-    if (!messageText.trim()) {
-      return;
+  // ==================== HELPER FUNCTIONS ====================
+  
+  /**
+   * Parse API response and extract message content
+   * Handles different response formats: knowledge_graph, faq, rag, and fallback
+   */
+  const parseApiResponse = (response) => {
+    let botText = '';
+    let answers = [];
+    let targetNodes = [];
+    let source = 'unknown';
+    
+    if (response.success === false) {
+      botText = response.message || response.answer || "I couldn't find a response. Please try another question.";
+    } else if (response.source === 'knowledge_graph' && response.answers?.length > 0) {
+      answers = response.answers;
+      targetNodes = response.target_nodes || [];
+      botText = '';
+      source = 'knowledge_graph';
+    } else if (response.source === 'faq') {
+      botText = response.answer || "FAQ answer not available.";
+      source = 'faq';
+    } else if (response.source === 'rag') {
+      botText = response.answer || "I couldn't find relevant information in documents.";
+      source = 'rag';
+    } else {
+      botText = response.message || response.answer || "I couldn't find a response. Please try another question.";
     }
+    
+    return { botText, answers, targetNodes, source };
+  };
 
-    // Add user message to UI
-    const userMessage = { type: 'user', text: messageText };
-    setMessages((prev) => [...prev, userMessage]);
+  /**
+   * Parse stored message answer from database (handles JSON parsing)
+   */
+  const parseStoredAnswer = (answerJson, source = 'unknown') => {
+    let answerText = answerJson;
+    let answers = [];
+    let targetNodes = [];
+    let finalSource = source;
+    
+    try {
+      const parsed = JSON.parse(answerJson);
+      
+      if (parsed.answers?.length > 0) {
+        answers = parsed.answers;
+        targetNodes = parsed.target_nodes || [];
+        answerText = '';
+      } else if (parsed.answer) {
+        answerText = parsed.answer;
+      } else {
+        answerText = JSON.stringify(parsed);
+      }
+      
+      if (parsed.source) finalSource = parsed.source;
+    } catch (e) {
+      // Not JSON, keep as is
+      answerText = answerJson;
+    }
+    
+    return { answerText, answers, targetNodes, source: finalSource };
+  };
+
+  /**
+   * Convert database messages to display format
+   * Each database message becomes one user message + one bot message
+   */
+  const convertDbMessagesToDisplay = (dbMessages) => {
+    const displayMessages = [];
+    
+    dbMessages.forEach(msg => {
+      // Add user question
+      displayMessages.push({
+        type: 'user',
+        text: msg.question
+      });
+      
+      // Add bot answer if it exists
+      if (msg.answer) {
+        const { answerText, answers, targetNodes, source } = parseStoredAnswer(
+          msg.answer,
+          msg.source || 'unknown'
+        );
+        
+        displayMessages.push({
+          type: 'bot',
+          text: answerText,
+          answers: answers,
+          targetNodes: targetNodes,
+          source: source
+        });
+      }
+    });
+    
+    return displayMessages;
+  };
+
+  /**
+   * Load existing session from database
+   * Called when URL has continue parameter
+   */
+  const loadExistingSession = async (sessionIdToLoad) => {
+    try {
+      const sessionResult = await getChatSession(sessionIdToLoad);
+      if (!sessionResult.chat_sessions?.length) return false;
+      
+      const session = sessionResult.chat_sessions[0];
+      setSessionId(session.session_id);
+      setSessionTitle(session.title);
+      
+      // Only load messages if UI is empty (don't overwrite newly added messages)
+      if (messages.length === 0) {
+        const messagesResult = await getChatMessages(sessionIdToLoad);
+        if (messagesResult.chat_messages) {
+          const displayMessages = convertDbMessagesToDisplay(messagesResult.chat_messages);
+          setMessages(displayMessages);
+        }
+      }
+      
+      return true;
+    } catch (err) {
+      console.error('Failed to load session:', err);
+      return false;
+    }
+  };
+
+  /**
+   * Create a new chat session in the database
+   * Returns the new session ID
+   */
+  const createNewSession = async () => {
+    try {
+      const result = await createChatSession(userId, sessionTitle, 'General');
+      if (result.insert_chat_sessions_one) {
+        const newSessionId = result.insert_chat_sessions_one.session_id;
+        setSessionId(newSessionId);
+        return newSessionId;
+      }
+      return null;
+    } catch (err) {
+      console.error('Failed to create session:', err);
+      return null;
+    }
+  };
+
+  /**
+   * Initialize or restore session based on URL
+   */
+  useEffect(() => {
+    if (urlSessionId) {
+      loadExistingSession(urlSessionId);
+    }
+    // If no URL session, do nothing - wait for first message to create session
+  }, [urlSessionId]);
+
+  // ==================== MESSAGE HANDLING ====================
+
+  /**
+   * Main message sending logic
+   * 1. Add user message to UI immediately
+   * 2. Create session if needed
+   * 3. Send to backend
+   * 4. Add bot response
+   */
+  const sendMessage = async (messageText) => {
+    if (!messageText.trim()) return;
+
+    // Step 1: Add user message to UI immediately
+    setMessages(prev => [...prev, { type: 'user', text: messageText }]);
     setInput('');
     setError(null);
     setLoading(true);
 
     try {
-      // Ensure we have a session ID before sending
+      // Step 2: Ensure we have a session
       let currentSessionId = sessionId;
       if (!currentSessionId) {
-        console.log('No session ID found, creating new session...');
-        const result = await createChatSession(userId, sessionTitle, 'General');
-        if (result.insert_chat_sessions_one) {
-          currentSessionId = result.insert_chat_sessions_one.session_id;
-          setSessionId(currentSessionId);
-          console.log('Created new session:', currentSessionId);
+        currentSessionId = await createNewSession();
+        if (currentSessionId) {
+          // Update URL to persist session
+          router.push(`/?continue=${currentSessionId}`);
+        } else {
+          throw new Error('Failed to create session');
         }
       }
-      
-      console.log('Sending message with session:', currentSessionId, 'user:', userId);
-      // Send message to backend with session tracking
+
+      // Step 3: Send message to backend
       const response = await sendDirectChatMessage(messageText, currentSessionId, userId);
-
-      // Extract answer and metadata from response
-      let botText = '';
-      let answers = [];
-      let targetNodes = [];
-      let source = 'unknown';
       
-      if (response.success === false) {
-        // Failed response with error message
-        botText = response.message || response.answer || "I couldn't find a response. Please try another question.";
-      } else if (response.source === 'knowledge_graph' && response.answers && response.answers.length > 0) {
-        // Knowledge graph match - show the answers
-        answers = response.answers;
-        targetNodes = response.target_nodes || [];
-        botText = ''; // Don't show message for graph matches, only related information
-        source = 'knowledge_graph';
-      } else if (response.source === 'faq') {
-        // FAQ match
-        botText = response.answer || "FAQ answer not available.";
-        source = 'faq';
-      } else if (response.source === 'rag') {
-        // RAG response from documents
-        botText = response.answer || "I couldn't find relevant information in documents.";
-        source = 'rag';
-      } else {
-        // Default fallback
-        botText = response.message || response.answer || "I couldn't find a response. Please try another question.";
-      }
-
-      const botMessage = {
+      // Step 4: Parse response and add to UI
+      const { botText, answers, targetNodes, source } = parseApiResponse(response);
+      setMessages(prev => [...prev, {
         type: 'bot',
         text: botText,
         answers: answers,
         targetNodes: targetNodes,
         source: source,
-      };
-      setMessages((prev) => [...prev, botMessage]);
+      }]);
     } catch (err) {
       const errorText = err instanceof Error ? err.message : 'Failed to get response';
       setError(errorText);
-      const errorMessage = {
+      setMessages(prev => [...prev, {
         type: 'bot',
         text: `Error: ${errorText}`,
-      };
-      setMessages((prev) => [...prev, errorMessage]);
+      }]);
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleSend = (e) => {
+    e.preventDefault();
+    sendMessage(input);
   };
 
   const handleOptionClick = (optionText) => {
     sendMessage(optionText);
   };
 
-  const handleSend = async (e) => {
-    e.preventDefault();
-    sendMessage(input);
-  };
+  // ==================== SESSION MANAGEMENT ====================
 
-  const handleNewChat = async () => {
+  /**
+   * Start a completely new chat
+   * Clear URL, session ID, and all messages
+   */
+  const handleNewChat = () => {
+    router.push('/');
     setMessages([]);
     setError(null);
-    const newTitle = 'New Chat';
-    setSessionTitle(newTitle);
-    // Create new session
-    try {
-      const result = await createChatSession(userId, newTitle, 'General');
-      if (result.insert_chat_sessions_one) {
-        setSessionId(result.insert_chat_sessions_one.session_id);
-      }
-    } catch (err) {
-      console.error('Failed to create new session:', err);
-    }
+    setSessionId(null);
+    setSessionTitle('New Chat');
+    setInput('');
   };
 
   const handleEditTitle = () => {

@@ -59,7 +59,7 @@ class LLMService:
             
         except Exception as e:
             logger.error(f"❌ Error generating answer: {str(e)}")
-            return self._create_simple_answer(question, context_chunks)
+            return "No Answer Found..."
     
     def _generate_with_huggingface(self, question: str, context_chunks: List[Dict[str, Any]], 
                                   system_prompt: Optional[str] = None,
@@ -170,17 +170,17 @@ Remember: Use markdown formatting (**, -, >, etc.) for proper structure."""
                 answer = answer.strip()
                 
                 logger.info(f"✅ Hugging Face answer generated (length: {len(answer)})")
-                return answer if answer else self._create_simple_answer(question, context_chunks)
+                return answer if answer else "No Answer Found..."
             else:
                 logger.error(f"❌ Hugging Face API error: {response.status_code} - {response.text}")
-                return self._create_simple_answer(question, context_chunks)
+                return "No Answer Found..."
                 
         except requests.exceptions.Timeout:
             logger.error(f"❌ Request timeout - model might be loading, trying fallback")
-            return self._create_simple_answer(question, context_chunks)
+            return "No Answer Found..."
         except Exception as e:
             logger.error(f"❌ Error with Hugging Face: {str(e)}")
-            return self._create_simple_answer(question, context_chunks)
+            return "No Answer Found..."
     
     def _create_prompt(self, question: str, context: str) -> str:
         """Create a detailed prompt that instructs the LLM to analyze and refine chunks"""
@@ -234,37 +234,11 @@ REFINED ANSWER:"""
             page_num = chunk.get('page_number', 'Unknown')
             score = chunk.get('score', 0)
             
-            context_part = f"""
-CHUNK {i}: [Source: {doc_name}, Page: {page_num}, Relevance Score: {score:.4f}]
-{text}
----"""
+            # Build clean context without bracket symbols
+            context_part = f"""{text}"""
             context_parts.append(context_part)
         
         logger.info(f"Built context from {len(relevant_chunks)} relevant chunks (filtered from {len(chunks)} total)")
         return "\n".join(context_parts)
-    
-    def _create_simple_answer(self, question: str, chunks: List[Dict[str, Any]]) -> str:
-        """Create a simple answer by combining relevant chunks when LLM fails"""
-        logger.info("Creating simple answer from context chunks")
-        
-        try:
-            # Combine the most relevant chunks
-            answer_parts = []
-            for i, chunk in enumerate(chunks[:3], 1):  # Use top 3 chunks
-                text = chunk.get('text_chunk', '')
-                doc_name = chunk.get('document_name', 'Unknown')
-                page_num = chunk.get('page_number', 'Unknown')
-                if text:
-                    answer_parts.append(f"[{doc_name}, Page {page_num}]: {text[:300]}")
-            
-            if answer_parts:
-                combined = "\n".join(answer_parts)
-                answer = f"Based on the documents:\n\n{combined}"
-                return answer
-            else:
-                return "I found relevant documents but could not extract specific information to answer your question."
-        except Exception as e:
-            logger.error(f"Error creating simple answer: {str(e)}")
-            return "I found relevant documents but encountered an error generating an answer."
 
 

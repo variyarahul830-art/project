@@ -239,6 +239,59 @@ class MilvusService:
         
         return formatted_results
     
+    def delete_by_document_name(self, document_name: str) -> int:
+        """
+        Delete all embeddings for a specific document
+        
+        Args:
+            document_name: Name of the document to delete embeddings for
+            
+        Returns:
+            Number of embeddings deleted
+        """
+        try:
+            logger.info(f"Deleting embeddings for document: {document_name}")
+            
+            # Load collection if not already loaded
+            if self.collection is None:
+                if utility.has_collection(self.collection_name):
+                    self.collection = Collection(name=self.collection_name)
+                    logger.info(f"✓ Collection '{self.collection_name}' loaded for deletion")
+                else:
+                    logger.warning(f"Collection '{self.collection_name}' does not exist")
+                    return 0
+            
+            # Load collection to perform delete operation
+            self.collection.load()
+            logger.info(f"Collection loaded and ready for deletion")
+            
+            # Delete entities where document_name matches
+            expr = f'document_name == "{document_name}"'
+            logger.info(f"Delete expression: {expr}")
+            
+            # Get count before deletion
+            query_result = self.collection.query(expr=expr, output_fields=["id"], limit=10000)
+            count_before = len(query_result)
+            logger.info(f"Found {count_before} embeddings to delete for document '{document_name}'")
+            
+            if count_before == 0:
+                logger.warning(f"No embeddings found for document '{document_name}'")
+                return 0
+            
+            # Perform deletion
+            self.collection.delete(expr=expr)
+            logger.info(f"Delete operation executed for document '{document_name}'")
+            
+            # Flush to ensure deletion is persisted
+            self.collection.flush()
+            logger.info(f"✅ Successfully deleted {count_before} embeddings for document '{document_name}'")
+            
+            return count_before
+            
+        except Exception as e:
+            logger.error(f"❌ Error deleting embeddings for document '{document_name}': {str(e)}")
+            raise
+    
     def get_collection_stats(self) -> Dict[str, Any]:
         """
         Get statistics about the collection

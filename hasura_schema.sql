@@ -33,7 +33,7 @@ CREATE TABLE IF NOT EXISTS edges (
 -- FAQs table
 CREATE TABLE IF NOT EXISTS faqs (
     id SERIAL PRIMARY KEY,
-    question TEXT NOT NULL,
+    question TEXT NOT NULL UNIQUE,
     answer TEXT NOT NULL,
     category VARCHAR(255),
     created_at TIMESTAMP DEFAULT NOW(),

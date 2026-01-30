@@ -617,6 +617,19 @@ async def pdf_exists_by_path(minio_path: str) -> bool:
     return bool(result.get("pdf_documents"))
 
 
+async def pdf_exists_by_filename(filename: str) -> bool:
+    """Check if a PDF with the same filename already exists"""
+    query = """
+    query PdfExistsByFilename($filename: String!) {
+        pdf_documents(where: {filename: {_eq: $filename}}, limit: 1) {
+            id
+        }
+    }
+    """
+    result = await hasura.execute(query, {"filename": filename})
+    return bool(result.get("pdf_documents"))
+
+
 async def create_pdf_document(
     filename: str,
     minio_path: str,
@@ -624,6 +637,7 @@ async def create_pdf_document(
     description: Optional[str] = None,
     processing_status: Optional[str] = None,
     is_processed: Optional[int] = None,
+    upload_date: Optional[str] = None,
 ):
     mutation = """
     mutation CreatePdf($object: pdf_documents_insert_input!) {
@@ -655,6 +669,8 @@ async def create_pdf_document(
         payload["processing_status"] = processing_status
     if is_processed is not None:
         payload["is_processed"] = is_processed
+    if upload_date is not None:
+        payload["upload_date"] = upload_date
 
     result = await hasura.execute(mutation, {"object": payload})
     return result.get("insert_pdf_documents_one")

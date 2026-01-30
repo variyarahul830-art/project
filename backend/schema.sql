@@ -42,7 +42,7 @@ CREATE INDEX idx_edges_target_node_id ON edges(target_node_id);
 -- ==================== FAQs TABLE ====================
 CREATE TABLE faqs (
     id SERIAL PRIMARY KEY,
-    question TEXT NOT NULL,
+    question TEXT NOT NULL UNIQUE,
     answer TEXT NOT NULL,
     category VARCHAR(255),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,

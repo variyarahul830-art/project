@@ -264,21 +264,24 @@ async def upload_pdf(
             detail="Only PDF files are allowed"
         )
     
+    # Check if PDF with same filename already exists
+    if await hasura_client.pdf_exists_by_filename(file.filename):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="PDF already uploaded"
+        )
+    
     try:
         # Read file content
         file_content = await file.read()
         file_size = len(file_content)
         
-        # Create MinIO path
+        # Create MinIO path with UTC timestamp
         timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S_")
         minio_path = f"{settings.MINIO_BUCKET_NAME}/{timestamp}{file.filename}"
         
-        # Check if file already exists in Hasura
-        if await hasura_client.pdf_exists_by_path(minio_path):
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="A file with this name was recently uploaded. Please try again or use a different filename."
-            )
+        # Get current time in ISO format for database storage
+        upload_date = datetime.utcnow().isoformat()
         
         # Upload to MinIO
         file_stream = io.BytesIO(file_content)
@@ -298,6 +301,7 @@ async def upload_pdf(
             description=description,
             processing_status="Pending processing",
             is_processed=0,
+            upload_date=upload_date,
         )
         
         # Add background task to process PDF
@@ -354,7 +358,7 @@ async def get_pdf(pdf_id: int):
 @router.delete("/documents/{pdf_id}", status_code=status.HTTP_200_OK)
 async def delete_pdf(pdf_id: int):
     """
-    Delete a PDF document from MinIO and database (metadata via Hasura)
+    Delete a PDF document from MinIO, database, and Milvus (metadata and embeddings)
     """
     pdf = await hasura_client.get_pdf_by_id(pdf_id)
     if not pdf:
@@ -366,16 +370,32 @@ async def delete_pdf(pdf_id: int):
     try:
         # Extract filename from minio_path (e.g., "pdf/20240121_120000_document.pdf" -> "20240121_120000_document.pdf")
         minio_filename = pdf.get("minio_path", "").split('/')[-1]
+        pdf_filename = pdf.get("filename")
         
         # Delete from MinIO
         minio_client.remove_object(settings.MINIO_BUCKET_NAME, minio_filename)
+        logger.info(f"Deleted PDF from MinIO: {minio_filename}")
+        
+        # Delete embeddings from Milvus
+        try:
+            milvus_service = MilvusService(
+                host=settings.MILVUS_HOST,
+                port=settings.MILVUS_PORT,
+                collection_name=settings.MILVUS_COLLECTION_NAME
+            )
+            deleted_count = milvus_service.delete_by_document_name(pdf_filename)
+            logger.info(f"Deleted {deleted_count} embeddings from Milvus for document: {pdf_filename}")
+        except Exception as e:
+            logger.error(f"Error deleting embeddings from Milvus: {str(e)}")
+            # Continue with deletion even if Milvus delete fails
         
         # Delete metadata via Hasura
         await hasura_client.delete_pdf(pdf_id)
+        logger.info(f"Deleted PDF metadata from database: {pdf_id}")
         
         return {
             "success": True,
-            "message": f"PDF '{pdf.get('filename')}' deleted successfully"
+            "message": f"PDF '{pdf_filename}' and its embeddings deleted successfully"
         }
         
     except S3Error as e:

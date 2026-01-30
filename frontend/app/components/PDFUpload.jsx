@@ -11,6 +11,7 @@ export default function PDFUpload() {
   const [showList, setShowList] = useState(false);
   const [message, setMessage] = useState(null);
   const [error, setError] = useState(null);
+  const [searchQuery, setSearchQuery] = useState('');
 
   const handleFileChange = (e) => {
     const selectedFile = e.target.files?.[0];
@@ -116,15 +117,37 @@ export default function PDFUpload() {
     return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i];
   };
 
-  const formatDate = (dateString) => {
-    return new Date(dateString).toLocaleString();
-  };
+ const formatUtcToIst = (utcString) => {
+  if (!utcString) return 'No date';
+
+  try {
+    // Force UTC interpretation
+    const utcDate = utcString.endsWith('Z')
+      ? new Date(utcString)
+      : new Date(utcString + 'Z');
+
+    if (isNaN(utcDate.getTime())) return 'Invalid date';
+
+    return utcDate.toLocaleString('en-IN', {
+      timeZone: 'Asia/Kolkata',
+      day: '2-digit',
+      month: 'short',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false
+    }) + ' IST';
+  } catch {
+    return 'Error formatting date';
+  }
+};
+
 
   return (
     <div className="pdf-upload-container">
       <div className="pdf-upload-box">
         <h2>📄 Upload PDF</h2>
-        
         <form onSubmit={handleUpload}>
           <div className="form-group">
             <label htmlFor="pdf-file-input">Select PDF File:</label>
@@ -166,7 +189,7 @@ export default function PDFUpload() {
               disabled={isLoading}
               className="btn btn-secondary"
             >
-              📋 View All PDFs ({pdfs.length})
+              📋 View All PDFs 
             </button>
           </div>
         </form>
@@ -181,13 +204,34 @@ export default function PDFUpload() {
           {pdfs.length === 0 ? (
             <p className="no-pdfs">No PDFs uploaded yet</p>
           ) : (
-            <div className="pdf-list">
-              {pdfs.map((pdf) => (
+            <>
+              <div className="search-box">
+                <input
+                  type="text"
+                  placeholder="🔍 Search PDFs by filename..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="search-input"
+                />
+                {searchQuery && (
+                  <button
+                    onClick={() => setSearchQuery('')}
+                    className="clear-search"
+                    title="Clear search"
+                  >
+                    ✕
+                  </button>
+                )}
+              </div>
+              <p>Total pdf : {pdfs.length} {searchQuery && `| Showing: ${pdfs.filter(pdf => pdf.filename.toLowerCase().includes(searchQuery.toLowerCase())).length}`}</p>
+              <div className="pdf-list">
+              {pdfs.filter(pdf => pdf.filename.toLowerCase().includes(searchQuery.toLowerCase())).map((pdf) => (
                 <div key={pdf.id} className="pdf-item">
                   <div className="pdf-info">
                     <h4>{pdf.filename}</h4>
                     <p className="file-meta">
-                      Size: {formatFileSize(pdf.file_size)} | Uploaded: {formatDate(pdf.upload_date)}
+                    
+                      Size: {formatFileSize(pdf.file_size)} | Uploaded: {formatUtcToIst(pdf.upload_date)}
                     </p>
                     {pdf.description && (
                       <p className="file-description">{pdf.description}</p>
@@ -216,7 +260,8 @@ export default function PDFUpload() {
                   </div>
                 </div>
               ))}
-            </div>
+              </div>
+            </>
           )}
           <button
             onClick={() => setShowList(false)}
@@ -395,6 +440,55 @@ export default function PDFUpload() {
           flex-direction: column;
           gap: 15px;
           margin-bottom: 15px;
+        }
+
+        .search-box {
+          position: relative;
+          margin-bottom: 15px;
+        }
+
+        .search-input {
+          width: 100%;
+          padding: 12px 40px 12px 12px;
+          border: 2px solid #667eea;
+          border-radius: 6px;
+          font-size: 14px;
+          font-family: inherit;
+          transition: all 0.3s ease;
+        }
+
+        .search-input:focus {
+          outline: none;
+          border-color: #5568d3;
+          box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        }
+
+        .search-input::placeholder {
+          color: #999;
+        }
+
+        .clear-search {
+          position: absolute;
+          right: 10px;
+          top: 50%;
+          transform: translateY(-50%);
+          background: #dc3545;
+          color: white;
+          border: none;
+          border-radius: 50%;
+          width: 24px;
+          height: 24px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          cursor: pointer;
+          font-size: 12px;
+          transition: all 0.3s ease;
+        }
+
+        .clear-search:hover {
+          background: #c82333;
+          transform: translateY(-50%) scale(1.1);
         }
 
         .pdf-item {
