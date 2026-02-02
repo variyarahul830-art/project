@@ -18,7 +18,9 @@ backend/migrations
 backend/*.egg-info
 backend/dist
 backend/build
-volumes/*
+
+# Docker volumes - exclude all volume data
+volumes/
 
 # IDE
 .vscode
@@ -34,6 +36,7 @@ Thumbs.db
 .env
 .env.local
 .env.*.local
+.env.docker
 
 # Logs
 *.log
