@@ -661,6 +661,8 @@ async def create_pdf_document(
         "filename": filename,
         "minio_path": minio_path,
         "file_size": file_size,
+        "chunk_count": 0,
+        "embedding_count": 0,
     }
 
     if description is not None:
@@ -696,6 +698,20 @@ async def get_pdf_by_id(pdf_id: int):
     """
     result = await hasura.execute(query, {"id": pdf_id})
     return result.get("pdf_documents_by_pk")
+
+
+async def get_pdf_id_by_name(filename: str):
+    """Get PDF ID by filename"""
+    query = """
+    query GetPdfByName($filename: String!) {
+        pdf_documents(where: {filename: {_eq: $filename}}, limit: 1) {
+            id
+        }
+    }
+    """
+    result = await hasura.execute(query, {"filename": filename})
+    pdfs = result.get("pdf_documents", [])
+    return pdfs[0]["id"] if pdfs else None
 
 
 async def get_all_pdfs():

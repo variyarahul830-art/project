@@ -297,6 +297,16 @@ async def chat(request: ChatRequest):
         
         logger.info("✅ Answer generated successfully")
         
+        # Get unique PDFs with their IDs for download links
+        pdf_doc_map = {}
+        for chunk in similar_chunks:
+            doc_name = chunk.get("document_name")
+            if doc_name and doc_name not in pdf_doc_map:
+                # Get PDF ID from database
+                pdf_id = await hasura_client.get_pdf_id_by_name(doc_name)
+                if pdf_id:
+                    pdf_doc_map[doc_name] = pdf_id
+        
         # Return answer with source information
         response_data = {
             "success": True,
@@ -308,7 +318,8 @@ async def chat(request: ChatRequest):
                 {
                     "document": chunk.get("document_name"),
                     "page": chunk.get("page_number"),
-                    "relevance_score": round(chunk.get("score", 0), 4)
+                    "relevance_score": round(chunk.get("score", 0), 4),
+                    "pdf_id": pdf_doc_map.get(chunk.get("document_name"))
                 } for chunk in similar_chunks
             ]
         }

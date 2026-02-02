@@ -44,7 +44,8 @@ export default function ChatBox({ workflowId, userId = 'user123', continueSessio
       botText = response.answer || "FAQ answer not available.";
       source = 'faq';
     } else if (response.source === 'rag') {
-      botText = response.answer || "I couldn't find relevant information in documents.";
+      // For RAG responses, pass the full response object to preserve source_documents
+      botText = response; // Pass the entire response object
       source = 'rag';
     } else {
       botText = response.message || response.answer || "I couldn't find a response. Please try another question.";
@@ -110,7 +111,8 @@ export default function ChatBox({ workflowId, userId = 'user123', continueSessio
           text: answerText,
           answers: answers,
           targetNodes: targetNodes,
-          source: source
+          source: source,
+          isHistorical: true // Mark messages loaded from database
         });
       }
     });
@@ -342,6 +344,7 @@ export default function ChatBox({ workflowId, userId = 'user123', continueSessio
                 targetNodes={msg.targetNodes}
                 onOptionClick={handleOptionClick}
                 source={msg.source}
+                isHistorical={msg.isHistorical}
               />
             ))}
           </div>
