@@ -1,3 +1,5 @@
+# this file is used to build the backend docker image
+
 # Use official Python runtime as base image
 FROM python:3.11-slim
 
