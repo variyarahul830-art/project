@@ -19,7 +19,7 @@ export default function DebugChat() {
     console.log('Sending request:', body);
 
     try {
-      const res = await fetch('http://localhost:8000/api/chat', {
+      const res = await fetch('http://localhost:8000/api/chat/', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body)

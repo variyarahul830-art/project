@@ -1,7 +1,8 @@
 'use client';
 
-import { useState } from 'react';
-import { useSearchParams } from 'next/navigation';
+import { useState, useEffect } from 'react';
+import { useSearchParams, useRouter } from 'next/navigation';
+import { useAuth } from '@/app/context/AuthContext';
 import Sidebar from './Sidebar';
 import ChatBox from './ChatBox';
 import GraphBuilderWrapper from './GraphBuilderWrapper';
@@ -10,10 +11,31 @@ import FAQManagement from './FAQManagement';
 
 export default function HomeClient() {
   const searchParams = useSearchParams();
+  const router = useRouter();
+  const { user, loading: authLoading } = useAuth();
   const continueSessionId = searchParams.get('continue');
   
   const [activeMode, setActiveMode] = useState('chat');
   const [currentWorkflowId, setCurrentWorkflowId] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    if (!authLoading) {
+      if (!user) {
+        router.push('/login');
+      } else {
+        setLoading(false);
+      }
+    }
+  }, [user, authLoading, router]);
+
+  if (loading || authLoading) {
+    return <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh' }}>Loading...</div>;
+  }
+
+  if (!user) {
+    return null;
+  }
 
   return (
     <div className="app-container">

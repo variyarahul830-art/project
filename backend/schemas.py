@@ -141,3 +141,43 @@ class FAQResponse(FAQBase):
     
     class Config:
         from_attributes = True
+
+# ==================== USER/AUTH SCHEMAS ====================
+
+class UserBase(BaseModel):
+    """Base User schema"""
+    username: str = Field(..., min_length=3, max_length=50, description="Username")
+    email: str = Field(..., description="Email address")
+
+class UserSignup(UserBase):
+    """Schema for user signup"""
+    password: str = Field(..., min_length=6, description="Password (min 6 characters)")
+    
+class UserLogin(BaseModel):
+    """Schema for user login"""
+    username: str = Field(..., description="Username or email")
+    password: str = Field(..., description="Password")
+
+class UserResponse(UserBase):
+    """Schema for user response"""
+    id: int
+    is_active: bool = True
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+    
+    class Config:
+        from_attributes = True
+
+class AuthResponse(BaseModel):
+    """Schema for authentication response"""
+    success: bool
+    message: str
+    user: Optional[UserResponse] = None
+    user_id: Optional[int] = None
+    token: Optional[str] = None  # JWT token
+    
+class ErrorResponse(BaseModel):
+    """Schema for error response"""
+    success: bool = False
+    message: str
+    error_code: Optional[str] = None

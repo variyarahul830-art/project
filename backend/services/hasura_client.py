@@ -887,8 +887,9 @@ async def get_chat_messages(session_id: str):
             message_id
             session_id
             user_id
-            role
-            content
+            question
+            answer
+            source
             timestamp
         }
     }
@@ -1048,3 +1049,127 @@ async def clear_chat_messages(session_id: str):
         await update_session_message_count(session_id)
     
     return result.get("delete_chat_messages", {}).get("affected_rows", 0)
+
+
+# ==================== USER AUTHENTICATION ====================
+
+async def get_user_by_username(username: str):
+    """Get user by username"""
+    query = """
+    query GetUserByUsername($username: String!) {
+        users(where: {username: {_eq: $username}}, limit: 1) {
+            id
+            username
+            email
+            password_hash
+            is_active
+            created_at
+            updated_at
+        }
+    }
+    """
+    result = await hasura.execute(query, {"username": username})
+    users = result.get("users", [])
+    return users[0] if users else None
+
+
+async def get_user_by_email(email: str):
+    """Get user by email"""
+    query = """
+    query GetUserByEmail($email: String!) {
+        users(where: {email: {_eq: $email}}, limit: 1) {
+            id
+            username
+            email
+            password_hash
+            is_active
+            created_at
+            updated_at
+        }
+    }
+    """
+    result = await hasura.execute(query, {"email": email})
+    users = result.get("users", [])
+    return users[0] if users else None
+
+
+async def get_user_by_id(user_id: int):
+    """Get user by ID"""
+    query = """
+    query GetUserById($id: Int!) {
+        users_by_pk(id: $id) {
+            id
+            username
+            email
+            password_hash
+            is_active
+            created_at
+            updated_at
+        }
+    }
+    """
+    result = await hasura.execute(query, {"id": user_id})
+    return result.get("users_by_pk")
+
+
+async def create_user(username: str, email: str, password_hash: str):
+    """Create new user"""
+    query = """
+    mutation CreateUser($username: String!, $email: String!, $password_hash: String!) {
+        insert_users_one(object: {username: $username, email: $email, password_hash: $password_hash, is_active: 1}) {
+            id
+            username
+            email
+            is_active
+            created_at
+        }
+    }
+    """
+    result = await hasura.execute(query, {
+        "username": username,
+        "email": email,
+        "password_hash": password_hash
+    })
+    return result.get("insert_users_one")
+
+
+async def update_user(user_id: int, username: Optional[str] = None, email: Optional[str] = None, is_active: Optional[int] = None):
+    """Update user information"""
+    update_fields = {}
+    if username is not None:
+        update_fields["username"] = username
+    if email is not None:
+        update_fields["email"] = email
+    if is_active is not None:
+        update_fields["is_active"] = is_active
+    
+    if not update_fields:
+        return await get_user_by_id(user_id)
+    
+    query = """
+    mutation UpdateUser($id: Int!, $set: users_set_input!) {
+        update_users_by_pk(pk_columns: {id: $id}, _set: $set) {
+            id
+            username
+            email
+            is_active
+            updated_at
+        }
+    }
+    """
+    result = await hasura.execute(query, {"id": user_id, "set": update_fields})
+    return result.get("update_users_by_pk")
+
+
+async def delete_user(user_id: int):
+    """Delete user"""
+    query = """
+    mutation DeleteUser($id: Int!) {
+        delete_users_by_pk(id: $id) {
+            id
+        }
+    }
+    """
+    result = await hasura.execute(query, {"id": user_id})
+    return result.get("delete_users_by_pk")
+

@@ -63,6 +63,12 @@ class Settings:
     CHUNK_SIZE: int = int(os.getenv("CHUNK_SIZE", "500"))  # in tokens
     CHUNK_OVERLAP: int = int(os.getenv("CHUNK_OVERLAP", "50"))  # in tokens
     
+    # ==================== AUTHENTICATION (Future: JWT) ====================
+    # JWT settings - will be used in future for token-based authentication
+    JWT_SECRET_KEY: str = os.getenv("JWT_SECRET_KEY", "your-secret-key-change-in-production")
+    JWT_ALGORITHM: str = os.getenv("JWT_ALGORITHM", "HS256")
+    JWT_EXPIRATION_HOURS: int = int(os.getenv("JWT_EXPIRATION_HOURS", "24"))
+    
     # Database URL
     @property
     def DATABASE_URL(self) -> str:

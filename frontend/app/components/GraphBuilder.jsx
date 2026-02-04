@@ -53,6 +53,8 @@ export default function GraphBuilder({ initialWorkflowId, onWorkflowChange }) {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [contextMenu, setContextMenu] = useState(null);
+  const [editingNode, setEditingNode] = useState(null);
+  const [editNodeText, setEditNodeText] = useState('');
   
   // Workflow management
   const [workflows, setWorkflows] = useState([]);
@@ -231,6 +233,16 @@ export default function GraphBuilder({ initialWorkflowId, onWorkflowChange }) {
       return;
     }
 
+    // Check for duplicate nodes globally (all workflows)
+    const trimmedText = newNodeText.trim().toLowerCase();
+    const isDuplicate = dbNodes.some(node => node.text.toLowerCase() === trimmedText);
+    
+    if (isDuplicate) {
+      setError('A node with this text already exists!');
+      setTimeout(() => setError(''), 3000);
+      return;
+    }
+
     setLoading(true);
     setError('');
     setSuccess('');
@@ -308,6 +320,51 @@ export default function GraphBuilder({ initialWorkflowId, onWorkflowChange }) {
     } finally {
       setContextMenu(null);
     }
+  };
+
+  const handleEditNode = (nodeId) => {
+    const node = dbNodes.find(n => n.id === nodeId);
+    if (node) {
+      setEditingNode(nodeId);
+      setEditNodeText(node.text);
+      setContextMenu(null);
+    }
+  };
+
+  const handleUpdateNode = async (e) => {
+    e.preventDefault();
+    if (!editNodeText.trim() || !editingNode) return;
+
+    // Check for duplicate nodes globally (excluding the current node being edited)
+    const trimmedText = editNodeText.trim().toLowerCase();
+    const isDuplicate = dbNodes.some(node => 
+      node.id !== editingNode && node.text.toLowerCase() === trimmedText
+    );
+    
+    if (isDuplicate) {
+      setError('A node with this text already exists!');
+      setTimeout(() => setError(''), 3000);
+      return;
+    }
+
+    try {
+      setLoading(true);
+      await hasura.updateNode(editingNode, editNodeText.trim());
+      setDbNodes(dbNodes.map(n => n.id === editingNode ? { ...n, text: editNodeText.trim() } : n));
+      setSuccess('Node updated successfully!');
+      setTimeout(() => setSuccess(''), 3000);
+      setEditingNode(null);
+      setEditNodeText('');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to update node');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleCancelEdit = () => {
+    setEditingNode(null);
+    setEditNodeText('');
   };
 
   const handleDeleteEdge = async (edgeId) => {
@@ -429,6 +486,7 @@ export default function GraphBuilder({ initialWorkflowId, onWorkflowChange }) {
                 <li>🔗 Drag from item handles to create connections</li>
                 <li>🔍 Scroll to zoom in/out</li>
                 <li>📍 Space + drag to pan</li>
+                <li>✏️ Right-click items to edit</li>
                 <li>🗑️ Right-click items/connections to delete</li>
               </ul>
             </div>
@@ -458,12 +516,20 @@ export default function GraphBuilder({ initialWorkflowId, onWorkflowChange }) {
             style={{ top: `${contextMenu.y}px`, left: `${contextMenu.x}px` }}
           >
             {contextMenu.type === 'node' && (
-              <button
-                onClick={() => handleDeleteNode(Number(contextMenu.id))}
-                className="context-menu-item"
-              >
-                🗑️ Delete Node
-              </button>
+              <>
+                <button
+                  onClick={() => handleEditNode(Number(contextMenu.id))}
+                  className="context-menu-item"
+                >
+                  ✏️ Edit Node
+                </button>
+                <button
+                  onClick={() => handleDeleteNode(Number(contextMenu.id))}
+                  className="context-menu-item"
+                >
+                  🗑️ Delete Node
+                </button>
+              </>
             )}
             {contextMenu.type === 'edge' && (
               <button
@@ -473,6 +539,44 @@ export default function GraphBuilder({ initialWorkflowId, onWorkflowChange }) {
                 🗑️ Delete Edge
               </button>
             )}
+          </div>
+        )}
+
+        {editingNode && (
+          <div className="modal-overlay" onClick={handleCancelEdit}>
+            <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+              <h3>✏️ Edit Node</h3>
+              <form onSubmit={handleUpdateNode}>
+                <input
+                  type="text"
+                  value={editNodeText}
+                  onChange={(e) => setEditNodeText(e.target.value)}
+                  disabled={loading}
+                  className="input-field"
+                  autoFocus
+                  placeholder="Enter node text..."
+                />
+                <div style={{ display: 'flex', gap: '8px', marginTop: '12px' }}>
+                  <button
+                    type="submit"
+                    disabled={loading || !editNodeText.trim()}
+                    className="btn btn-primary"
+                    style={{ flex: 1 }}
+                  >
+                    {loading ? 'Updating...' : 'Update'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleCancelEdit}
+                    disabled={loading}
+                    className="btn"
+                    style={{ flex: 1, background: '#999', color: 'white' }}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </form>
+            </div>
           </div>
         )}
       </div>
@@ -713,6 +817,56 @@ export default function GraphBuilder({ initialWorkflowId, onWorkflowChange }) {
           border-radius: 0 0 6px 6px;
         }
 
+        .modal-overlay {
+          position: fixed;
+          top: 0;
+          left: 0;
+          right: 0;
+          bottom: 0;
+          background: rgba(0, 0, 0, 0.5);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          z-index: 2000;
+          animation: fadeIn 0.2s ease;
+        }
+
+        @keyframes fadeIn {
+          from {
+            opacity: 0;
+          }
+          to {
+            opacity: 1;
+          }
+        }
+
+        .modal-content {
+          background: white;
+          padding: 24px;
+          border-radius: 12px;
+          box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+          min-width: 400px;
+          max-width: 500px;
+          animation: slideUp 0.3s ease;
+        }
+
+        @keyframes slideUp {
+          from {
+            opacity: 0;
+            transform: translateY(20px);
+          }
+          to {
+            opacity: 1;
+            transform: translateY(0);
+          }
+        }
+
+        .modal-content h3 {
+          margin: 0 0 16px 0;
+          color: #333;
+          font-size: 18px;
+        }
+
         @media (max-width: 768px) {
           .graph-builder-wrapper {
             flex-direction: column;
@@ -727,6 +881,11 @@ export default function GraphBuilder({ initialWorkflowId, onWorkflowChange }) {
 
           .graph-builder-right {
             min-height: 400px;
+          }
+
+          .modal-content {
+            min-width: 90%;
+            margin: 0 16px;
           }
         }
       `}</style>

@@ -5,6 +5,7 @@
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
+
 // ============== Chat Operations ==============
 
 /**
@@ -14,28 +15,31 @@ const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
  * @param {string} sessionId - Optional session ID for chat history
  * @param {string} userId - Optional user ID for chat history
  * @returns {Promise} Promise with the response
- */
-export async function chat(question, workflowId, sessionId = null, userId = null) {
-  try {
-    const body = { question, workflow_id: workflowId };
-    if (sessionId) body.session_id = sessionId;
-    if (userId) body.user_id = userId;
+//  
+
+*/
+// export async function chat(question, workflowId, sessionId = null, userId = null) {
+//   try {
+//     const body = { question };
+//     if (workflowId) body.workflow_id = parseInt(workflowId, 10);
+//     if (sessionId) body.session_id = String(sessionId);
+//     if (userId) body.user_id = String(userId);
     
-    const response = await fetch(`${API_BASE_URL}/api/chat`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    });
+//     const response = await fetch(`${API_BASE_URL}/api/chat/`, {
+//       method: 'POST',
+//       headers: { 'Content-Type': 'application/json' },
+//       body: JSON.stringify(body),
+//     });
 
-    if (!response.ok) {
-      throw new Error(`Failed to send question: ${response.statusText}`);
-    }
+//     if (!response.ok) {
+//       throw new Error(`Failed to send question: ${response.statusText}`);
+//     }
 
-    return await response.json();
-  } catch (error) {
-    throw new Error(error instanceof Error ? error.message : 'Failed to send question');
-  }
-}
+//     return await response.json();
+//   } catch (error) {
+//     throw new Error(error instanceof Error ? error.message : 'Failed to send question');
+//   }
+// }
 
 /**
  * Send a direct chat message with session management
@@ -47,10 +51,10 @@ export async function chat(question, workflowId, sessionId = null, userId = null
 export async function sendDirectChatMessage(question, sessionId = null, userId = null) {
   try {
     const body = { question };
-    if (sessionId) body.session_id = sessionId;
-    if (userId) body.user_id = userId;
+    if (sessionId) body.session_id = String(sessionId);
+    if (userId) body.user_id = String(userId);
     
-    const response = await fetch(`${API_BASE_URL}/api/chat`, {
+    const response = await fetch(`${API_BASE_URL}/api/chat/`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),

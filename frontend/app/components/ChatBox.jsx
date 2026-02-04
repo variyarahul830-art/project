@@ -2,11 +2,13 @@
 
 import { useState, useEffect } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
+import { useAuth } from '@/app/context/AuthContext';
 import { sendDirectChatMessage } from '../services/api';
-import { createChatSession, getChatMessages, getChatSession, updateChatSession } from '../services/hasura';
+import { createSession, getMessages, getSession, updateSession } from '../services/sessions';
 import Message from './Message';
 
-export default function ChatBox({ workflowId, userId = 'user123', continueSessionId = null }) {
+export default function ChatBox({ workflowId, continueSessionId = null }) {
+  const { user } = useAuth();
   const searchParams = useSearchParams();
   const router = useRouter();
   const urlSessionId = searchParams.get('continue') || continueSessionId;
@@ -121,23 +123,28 @@ export default function ChatBox({ workflowId, userId = 'user123', continueSessio
   };
 
   /**
-   * Load existing session from database
+   * Load existing session from database via backend API
    * Called when URL has continue parameter
    */
   const loadExistingSession = async (sessionIdToLoad) => {
     try {
-      const sessionResult = await getChatSession(sessionIdToLoad);
-      if (!sessionResult.chat_sessions?.length) return false;
+      const sessionResult = await getSession(sessionIdToLoad);
       
-      const session = sessionResult.chat_sessions[0];
-      setSessionId(session.session_id);
-      setSessionTitle(session.title);
+      if (!sessionResult || !sessionResult.session) {
+        console.warn('Session not found:', sessionIdToLoad);
+        return false;
+      }
+      
+      const session = sessionResult.session;
+      
+      setSessionId(session.id);
+      setSessionTitle(session.title || 'New Chat');
       
       // Only load messages if UI is empty (don't overwrite newly added messages)
       if (messages.length === 0) {
-        const messagesResult = await getChatMessages(sessionIdToLoad);
-        if (messagesResult.chat_messages) {
-          const displayMessages = convertDbMessagesToDisplay(messagesResult.chat_messages);
+        const messagesResult = await getMessages(sessionIdToLoad);
+        if (messagesResult && messagesResult.messages) {
+          const displayMessages = convertDbMessagesToDisplay(messagesResult.messages);
           setMessages(displayMessages);
         }
       }
@@ -145,19 +152,23 @@ export default function ChatBox({ workflowId, userId = 'user123', continueSessio
       return true;
     } catch (err) {
       console.error('Failed to load session:', err);
+      setError('Failed to load session. Starting new chat.');
       return false;
     }
   };
 
   /**
-   * Create a new chat session in the database
+   * Create a new chat session in the database via backend API
    * Returns the new session ID
    */
   const createNewSession = async () => {
     try {
-      const result = await createChatSession(userId, sessionTitle, 'General');
-      if (result.insert_chat_sessions_one) {
-        const newSessionId = result.insert_chat_sessions_one.session_id;
+      if (!user?.user_id) {
+        throw new Error('User not authenticated');
+      }
+      const result = await createSession(sessionTitle, 'General');
+      if (result.session) {
+        const newSessionId = result.session.id;
         setSessionId(newSessionId);
         return newSessionId;
       }
@@ -172,11 +183,11 @@ export default function ChatBox({ workflowId, userId = 'user123', continueSessio
    * Initialize or restore session based on URL
    */
   useEffect(() => {
-    if (urlSessionId) {
+    if (urlSessionId && user?.user_id) {
       loadExistingSession(urlSessionId);
     }
     // If no URL session, do nothing - wait for first message to create session
-  }, [urlSessionId]);
+  }, [urlSessionId, user?.user_id]);
 
   // ==================== MESSAGE HANDLING ====================
 
@@ -189,6 +200,10 @@ export default function ChatBox({ workflowId, userId = 'user123', continueSessio
    */
   const sendMessage = async (messageText) => {
     if (!messageText.trim()) return;
+    if (!user?.user_id) {
+      setError('User not authenticated');
+      return;
+    }
 
     // Step 1: Add user message to UI immediately
     setMessages(prev => [...prev, { type: 'user', text: messageText }]);
@@ -209,8 +224,8 @@ export default function ChatBox({ workflowId, userId = 'user123', continueSessio
         }
       }
 
-      // Step 3: Send message to backend
-      const response = await sendDirectChatMessage(messageText, currentSessionId, userId);
+      // Step 3: Send message to backend with logged-in user_id
+      const response = await sendDirectChatMessage(messageText, currentSessionId, user.user_id);
       
       // Step 4: Parse response and add to UI
       const { botText, answers, targetNodes, source } = parseApiResponse(response);
@@ -266,7 +281,7 @@ export default function ChatBox({ workflowId, userId = 'user123', continueSessio
     if (!editTitleValue.trim() || !sessionId) return;
     
     try {
-      await updateChatSession(sessionId, editTitleValue, 'General');
+      await updateSession(sessionId, editTitleValue, 'General');
       setSessionTitle(editTitleValue);
       setIsEditingTitle(false);
     } catch (err) {

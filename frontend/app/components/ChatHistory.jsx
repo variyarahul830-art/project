@@ -2,11 +2,13 @@
 
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { getUserChatSessions, getChatMessages, updateChatSession, deleteChatSession } from '../services/hasura';
+import { useAuth } from '@/app/context/AuthContext';
+import { getSessions, getMessages, updateSession, deleteSession } from '../services/sessions';
 import styles from './ChatHistory.module.css';
 
-export default function ChatHistory({ userId = 'user123' }) {
+export default function ChatHistory() {
   const router = useRouter();
+  const { user, token, loading: authLoading } = useAuth();
   const [sessions, setSessions] = useState([]);
   const [selectedSession, setSelectedSession] = useState(null);
   const [messages, setMessages] = useState([]);
@@ -15,50 +17,60 @@ export default function ChatHistory({ userId = 'user123' }) {
   const [editingSession, setEditingSession] = useState(null);
   const [editTitle, setEditTitle] = useState('');
 
-  // Load all sessions on mount
+  // Redirect to login if not authenticated
   useEffect(() => {
-    loadSessions();
-  }, [userId]);
+    if (!authLoading && !user) {
+      router.push('/login');
+    }
+  }, [authLoading, user, router]);
+
+  // Load all sessions when user is available or token changes
+  useEffect(() => {
+    if (!authLoading && user?.user_id && token) {
+      console.log('Loading sessions for user:', user.user_id);
+      loadSessions();
+    }
+  }, [user?.user_id, authLoading, token]);
 
   const loadSessions = async () => {
     try {
       setLoading(true);
-      const result = await getUserChatSessions(userId);
-      if (result.chat_sessions) {
-        // Filter out empty sessions (no messages)
-        const sessionsWithMessages = result.chat_sessions.filter(s => s.total_messages > 0);
-        
-        // Delete empty sessions from database
-        const emptySessions = result.chat_sessions.filter(s => s.total_messages === 0);
-        for (const emptySession of emptySessions) {
-          try {
-            await deleteChatSession(emptySession.session_id);
-          } catch (err) {
-            console.error('Failed to delete empty session:', err);
-          }
-        }
-        
+      setError(null);
+      console.log('Fetching sessions from backend');
+      
+      const result = await getSessions();
+      console.log('Sessions result:', result);
+      
+      if (result.sessions) {
+        const sessionsWithMessages = result.sessions.filter(s => s.total_messages > 0);
         setSessions(sessionsWithMessages);
       }
     } catch (err) {
-      setError('Failed to load chat sessions');
       console.error('Error loading sessions:', err);
+      setError('Failed to load sessions');
+      setSessions([]);
     } finally {
       setLoading(false);
     }
   };
 
-  const loadSessionMessages = async (sessionId) => {
+  const loadMessages = async (sessionId) => {
     try {
       setLoading(true);
+      setError(null);
       setSelectedSession(sessionId);
-      const result = await getChatMessages(sessionId);
-      if (result.chat_messages) {
-        setMessages(result.chat_messages);
+      console.log('Fetching messages for session:', sessionId);
+      
+      const result = await getMessages(sessionId);
+      console.log('Messages result:', result);
+      
+      if (result.messages) {
+        setMessages(result.messages);
       }
     } catch (err) {
-      setError('Failed to load messages');
       console.error('Error loading messages:', err);
+      setError('Failed to load messages');
+      setMessages([]);
     } finally {
       setLoading(false);
     }
@@ -73,15 +85,22 @@ export default function ChatHistory({ userId = 'user123' }) {
     if (!editTitle.trim()) return;
     
     try {
-      await updateChatSession(sessionId, editTitle, 'General');
+      setLoading(true);
+      setError(null);
+      
+      const session = sessions.find(s => s.id === sessionId);
+      await updateSession(sessionId, editTitle, session?.category || 'general');
+      
       setSessions(prev => prev.map(s => 
-        s.session_id === sessionId ? { ...s, title: editTitle } : s
+        s.id === sessionId ? { ...s, title: editTitle } : s
       ));
       setEditingSession(null);
       setEditTitle('');
     } catch (err) {
       setError('Failed to update session title');
       console.error('Error updating session:', err);
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -90,8 +109,33 @@ export default function ChatHistory({ userId = 'user123' }) {
     setEditTitle('');
   };
 
+  const handleDeleteSession = async (sessionId) => {
+    if (!window.confirm('Are you sure you want to delete this session?')) {
+      return;
+    }
+
+    try {
+      setLoading(true);
+      setError(null);
+      
+      await deleteSession(sessionId);
+      
+      const updatedSessions = sessions.filter(s => s.id !== sessionId);
+      setSessions(updatedSessions);
+      
+      if (selectedSession === sessionId) {
+        setSelectedSession(null);
+        setMessages([]);
+      }
+    } catch (err) {
+      setError('Failed to delete session');
+      console.error('Error deleting session:', err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleContinueChat = (sessionId) => {
-    // Navigate to chat page with session ID - this will load the session automatically
     router.push(`/?continue=${sessionId}`);
   };
 
@@ -151,14 +195,14 @@ export default function ChatHistory({ userId = 'user123' }) {
             <div className={styles.sessionsGrid}>
               {sessions.map(session => (
                 <div
-                  key={session.session_id}
+                  key={session.id}
                   className={`${styles.sessionCard} ${
-                    selectedSession === session.session_id ? styles.active : ''
+                    selectedSession === session.id ? styles.active : ''
                   }`}
-                  onClick={() => !editingSession && loadSessionMessages(session.session_id)}
+                  onClick={() => !editingSession && loadMessages(session.id)}
                 >
                   <div className={styles.sessionHeader}>
-                    {editingSession === session.session_id ? (
+                    {editingSession === session.id ? (
                       <input
                         type="text"
                         value={editTitle}
@@ -170,7 +214,7 @@ export default function ChatHistory({ userId = 'user123' }) {
                     ) : (
                       <h3>{session.title}</h3>
                     )}
-                    <span className={styles.category}>{session.category}</span>
+                    <span className={styles.category}>{session.category || 'general'}</span>
                   </div>
                   <div className={styles.sessionInfo}>
                     <span className={styles.messageCount}>
@@ -188,9 +232,9 @@ export default function ChatHistory({ userId = 'user123' }) {
                   
                   {/* Edit buttons */}
                   <div className={styles.sessionActions} onClick={(e) => e.stopPropagation()}>
-                    {editingSession === session.session_id ? (
+                    {editingSession === session.id ? (
                       <>
-                        <button onClick={() => handleSaveEdit(session.session_id)} className={styles.saveBtn}>
+                        <button onClick={() => handleSaveEdit(session.id)} className={styles.saveBtn}>
                           ✓ Save
                         </button>
                         <button onClick={handleCancelEdit} className={styles.cancelBtn}>
@@ -198,13 +242,22 @@ export default function ChatHistory({ userId = 'user123' }) {
                         </button>
                       </>
                     ) : (
-                      <button 
-                        onClick={() => handleEditSession(session.session_id, session.title)}
-                        className={styles.editBtn}
-                        title="Edit session name"
-                      >
-                        ✏️ Edit
-                      </button>
+                      <>
+                        <button 
+                          onClick={() => handleEditSession(session.id, session.title)}
+                          className={styles.editBtn}
+                          title="Edit session name"
+                        >
+                          ✏️ Edit
+                        </button>
+                        <button 
+                          onClick={() => handleDeleteSession(session.id)}
+                          className={styles.deleteBtn}
+                          title="Delete session"
+                        >
+                          🗑️ Delete
+                        </button>
+                      </>
                     )}
                   </div>
                 </div>
@@ -224,7 +277,7 @@ export default function ChatHistory({ userId = 'user123' }) {
             <>
               <div className={styles.messagesHeader}>
                 <h2>
-                  {sessions.find(s => s.session_id === selectedSession)?.title || 'Conversation'}
+                  {sessions.find(s => s.id === selectedSession)?.title || 'Conversation'}
                 </h2>
                 <div className={styles.headerActions}>
                   <button onClick={() => handleContinueChat(selectedSession)} className={styles.continueBtn}>
@@ -242,13 +295,13 @@ export default function ChatHistory({ userId = 'user123' }) {
                 ) : messages.length === 0 ? (
                   <div className={styles.empty}>No messages in this session</div>
                 ) : (
-                  messages.map(msg => (
-                    <div key={msg.message_id} className={styles.messageGroup}>
+                  messages.map((msg, idx) => (
+                    <div key={idx} className={styles.messageGroup}>
                       {/* Question */}
                       <div className={styles.questionBubble}>
                         <div className={styles.bubbleHeader}>
                           <span className={styles.label}>You asked:</span>
-                          <span className={styles.time}>{formatDate(msg.timestamp)}</span>
+                          <span className={styles.time}>{formatDate(msg.created_at)}</span>
                         </div>
                         <p>{msg.question}</p>
                       </div>

@@ -1,0 +1,22 @@
+Suspense  React component : 
+
+    is used to show a loading UI while React is waiting for something needed to show the screen.
+    Show loading until it is ready to render
+    
+    <Suspense fallback={<Loading />}>
+    <HomeClient />
+    </Suspense>        :  Show <Loading /> until <HomeClient /> is ready to be shown.”
+
+    1️⃣ <HomeClient />
+
+    This is the actual screen/content you want the user to see.
+
+    But:
+
+    it might fetch data
+
+    it might load JS code
+
+    it might do async work
+
+    So React can’t show it immediately.

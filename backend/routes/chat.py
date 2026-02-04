@@ -33,6 +33,21 @@ async def chat(request: ChatRequest):
         logger.info(f"Processing question: {request.question}")
         logger.info(f"Searching across ALL workflows (workflow_id parameter ignored)")
         
+        # Resolve session_id if numeric (convert id -> session_id)
+        actual_session_id = request.session_id
+        if request.session_id and request.user_id:
+            # Check if session_id is numeric (meaning it's the 'id' field)
+            if request.session_id.isdigit():
+                logger.info(f"Converting numeric session ID {request.session_id} to actual session_id")
+                # Get all user sessions and find the one with this id
+                sessions = await hasura_client.get_user_chat_sessions(request.user_id)
+                session = next((s for s in sessions if str(s.get("id")) == request.session_id), None)
+                if session:
+                    actual_session_id = session.get("session_id")
+                    logger.info(f"Resolved session_id: {actual_session_id}")
+                else:
+                    logger.warning(f"Session with id={request.session_id} not found for user={request.user_id}")
+        
         # Initialize variables for saving to database
         answer_text = None
         source_type = None
@@ -76,13 +91,13 @@ async def chat(request: ChatRequest):
                 }
                 
                 # Save question and answer to chat history
-                if request.session_id and request.user_id:
+                if actual_session_id and request.user_id:
                     try:
                         message_id = f"msg_{uuid.uuid4().hex[:16]}"
-                        logger.info(f"💾 Saving knowledge_graph message (session={request.session_id}, user={request.user_id})")
+                        logger.info(f"💾 Saving knowledge_graph message (session={actual_session_id}, user={request.user_id})")
                         await hasura_client.add_chat_message(
                             message_id=message_id,
-                            session_id=request.session_id,
+                            session_id=actual_session_id,
                             user_id=request.user_id,
                             question=request.question,
                             answer=json.dumps(response_data),
@@ -92,7 +107,7 @@ async def chat(request: ChatRequest):
                     except Exception as e:
                         logger.error(f"❌ Failed to save chat message: {e}", exc_info=True)
                 else:
-                    logger.warning(f"⚠️  Skipping save - session_id={request.session_id}, user_id={request.user_id}")
+                    logger.warning(f"⚠️  Skipping save - session_id={actual_session_id}, user_id={request.user_id}")
                 
                 return response_data
         
@@ -147,12 +162,12 @@ async def chat(request: ChatRequest):
                 }
                 
                 # Save question and answer to chat history
-                if request.session_id and request.user_id:
+                if actual_session_id and request.user_id:
                     try:
                         message_id = f"msg_{uuid.uuid4().hex[:16]}"
                         await hasura_client.add_chat_message(
                             message_id=message_id,
-                            session_id=request.session_id,
+                            session_id=actual_session_id,
                             user_id=request.user_id,
                             question=request.question,
                             answer=json.dumps(response_data),
@@ -187,12 +202,12 @@ async def chat(request: ChatRequest):
             }
             
             # Save question and answer to chat history
-            if request.session_id and request.user_id:
+            if actual_session_id and request.user_id:
                 try:
                     message_id = f"msg_{uuid.uuid4().hex[:16]}"
                     await hasura_client.add_chat_message(
                         message_id=message_id,
-                        session_id=request.session_id,
+                        session_id=actual_session_id,
                         user_id=request.user_id,
                         question=request.question,
                         answer=cached_answer.get("answer"),
@@ -235,12 +250,12 @@ async def chat(request: ChatRequest):
             )
             
             # Save question and answer to chat history
-            if request.session_id and request.user_id:
+            if actual_session_id and request.user_id:
                 try:
                     message_id = f"msg_{uuid.uuid4().hex[:16]}"
                     await hasura_client.add_chat_message(
                         message_id=message_id,
-                        session_id=request.session_id,
+                        session_id=actual_session_id,
                         user_id=request.user_id,
                         question=request.question,
                         answer=faq_exact["answer"],
@@ -286,12 +301,12 @@ async def chat(request: ChatRequest):
             )
             
             # Save question and answer to chat history
-            if request.session_id and request.user_id:
+            if actual_session_id and request.user_id:
                 try:
                     message_id = f"msg_{uuid.uuid4().hex[:16]}"
                     await hasura_client.add_chat_message(
                         message_id=message_id,
-                        session_id=request.session_id,
+                        session_id=actual_session_id,
                         user_id=request.user_id,
                         question=request.question,
                         answer=best_faq["answer"],
@@ -404,13 +419,13 @@ async def chat(request: ChatRequest):
         }
         
         # Save question and answer to chat history
-        if request.session_id and request.user_id:
+        if actual_session_id and request.user_id:
             try:
                 message_id = f"msg_{uuid.uuid4().hex[:16]}"
-                logger.info(f"💾 Saving RAG message (session={request.session_id}, user={request.user_id})")
+                logger.info(f"💾 Saving RAG message (session={actual_session_id}, user={request.user_id})")
                 await hasura_client.add_chat_message(
                     message_id=message_id,
-                    session_id=request.session_id,
+                    session_id=actual_session_id,
                     user_id=request.user_id,
                     question=request.question,
                     answer=answer,
@@ -420,7 +435,7 @@ async def chat(request: ChatRequest):
             except Exception as e:
                 logger.error(f"❌ Failed to save RAG chat message: {e}", exc_info=True)
         else:
-            logger.warning(f"⚠️  Skipping RAG save - session_id={request.session_id}, user_id={request.user_id}")
+            logger.warning(f"⚠️  Skipping RAG save - session_id={actual_session_id}, user_id={request.user_id}")
         
         return response_data
     
@@ -435,7 +450,7 @@ async def chat(request: ChatRequest):
 @router.get("/cache/info", response_model=dict)
 async def get_cache_info():
     """
-    Get Redis cache statistics and information
+    Get Redis cache statistics and information (Requires Authentication)
     
     Returns:
     - connected: Whether Redis is connected
@@ -474,7 +489,7 @@ async def get_cache_info():
 @router.delete("/cache/clear", response_model=dict)
 async def clear_faq_cache():
     """
-    Clear all FAQ cache entries (use with caution)
+    Clear all FAQ cache entries (use with caution - Requires Authentication)
     
     Returns:
     - success: Whether cache was cleared
