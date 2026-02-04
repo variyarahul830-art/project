@@ -5,6 +5,7 @@ from services import hasura_client
 from services.embeddings import EmbeddingGenerator
 from services.milvus_service import MilvusService
 from services.llm_service import LLMService
+from services.redis_cache import get_redis_cache
 import logging
 import json
 import uuid
@@ -56,6 +57,7 @@ async def chat(request: ChatRequest):
                         "is_source": is_source
                     })
                 
+                logger.info(f"📍 Answer from NODE")
                 response_data = {
                     "success": True,
                     "question": source_node["text"],
@@ -69,6 +71,7 @@ async def chat(request: ChatRequest):
                         for node in target_nodes
                     ],
                     "source": "knowledge_graph",
+                    "data_source": "NODE",
                     "count": len(target_nodes)
                 }
                 
@@ -125,6 +128,7 @@ async def chat(request: ChatRequest):
                         "is_source": is_source
                     })
                 
+                logger.info(f"📍 Answer from NODE")
                 response_data = {
                     "success": True,
                     "question": request.question,
@@ -138,6 +142,7 @@ async def chat(request: ChatRequest):
                         for node in unique_targets
                     ],
                     "source": "knowledge_graph",
+                    "data_source": "NODE",
                     "count": len(unique_targets)
                 }
                 
@@ -160,20 +165,74 @@ async def chat(request: ChatRequest):
             else:
                 logger.info("Partial match found source nodes, but they have no target connections")
         
-        # Step 2: Try to find answer in FAQs
-        logger.info("Step 3: Searching FAQs...")
+        # Step 2: Try to find answer in FAQs (with Redis caching)
+        logger.info("Step 3: Checking Redis cache and FAQs...")
+        
+        # Initialize Redis cache
+        redis_cache = get_redis_cache()
+        
+        # Step 3a: Check Redis cache first
+        cached_answer = redis_cache.get(request.question)
+        if cached_answer:
+            logger.info(f"⚡ Answer from REDIS")
+            response_data = {
+                "success": True,
+                "question": request.question,
+                "answer": cached_answer.get("answer"),
+                "source": cached_answer.get("source"),
+                "faq_id": cached_answer.get("faq_id"),
+                "category": cached_answer.get("category"),
+                "from_cache": True,
+                "data_source": "REDIS"
+            }
+            
+            # Save question and answer to chat history
+            if request.session_id and request.user_id:
+                try:
+                    message_id = f"msg_{uuid.uuid4().hex[:16]}"
+                    await hasura_client.add_chat_message(
+                        message_id=message_id,
+                        session_id=request.session_id,
+                        user_id=request.user_id,
+                        question=request.question,
+                        answer=cached_answer.get("answer"),
+                        source="faq_cache"
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to save cached chat message: {e}")
+            
+            return response_data
+        
+        # Step 3b: Search FAQs (exact match)
+        logger.info("Cache miss - Searching FAQs for exact match...")
         faq_exact = await hasura_client.search_faq_exact(request.question)
         
         if faq_exact:
-            logger.info(f"✅ Found exact FAQ match")
+            logger.info(f"📚 Answer from FAQ")
             response_data = {
                 "success": True,
                 "question": request.question,
                 "answer": faq_exact["answer"],
                 "source": "faq",
                 "faq_id": faq_exact["id"],
-                "category": faq_exact.get("category")
+                "category": faq_exact.get("category"),
+                "from_cache": False,
+                "data_source": "FAQ"
             }
+            
+            # ✨ NEW: Cache this FAQ answer for future queries (20 min TTL)
+            ttl = settings.REDIS_FAQ_TTL_MINUTES
+            logger.info(f"💾 Caching FAQ answer in Redis (TTL: {ttl}min)...")
+            redis_cache.set(
+                request.question,
+                {
+                    "answer": faq_exact["answer"],
+                    "source": "faq",
+                    "faq_id": faq_exact["id"],
+                    "category": faq_exact.get("category")
+                },
+                ttl_minutes=ttl
+            )
             
             # Save question and answer to chat history
             if request.session_id and request.user_id:
@@ -192,10 +251,11 @@ async def chat(request: ChatRequest):
             
             return response_data
         
-        # Try partial FAQ match
+        # Step 3c: Try partial FAQ match
+        logger.info("No exact match found - Searching for partial FAQ match...")
         faq_partial = await hasura_client.search_faq_partial(request.question)
         if faq_partial:
-            logger.info(f"✅ Found {len(faq_partial)} partial FAQ matches")
+            logger.info(f"📚 Answer from FAQ")
             # Return the first (most relevant) partial match
             best_faq = faq_partial[0]
             response_data = {
@@ -205,8 +265,25 @@ async def chat(request: ChatRequest):
                 "source": "faq",
                 "faq_id": best_faq["id"],
                 "category": best_faq.get("category"),
-                "match_type": "partial"
+                "match_type": "partial",
+                "from_cache": False,
+                "data_source": "FAQ"
             }
+            
+            # ✨ NEW: Cache this partial FAQ answer for future queries (20 min TTL)
+            ttl = settings.REDIS_FAQ_TTL_MINUTES
+            logger.info(f"💾 Caching partial FAQ answer in Redis (TTL: {ttl}min)...")
+            redis_cache.set(
+                request.question,
+                {
+                    "answer": best_faq["answer"],
+                    "source": "faq",
+                    "faq_id": best_faq["id"],
+                    "category": best_faq.get("category"),
+                    "match_type": "partial"
+                },
+                ttl_minutes=ttl
+            )
             
             # Save question and answer to chat history
             if request.session_id and request.user_id:
@@ -308,11 +385,13 @@ async def chat(request: ChatRequest):
                     pdf_doc_map[doc_name] = pdf_id
         
         # Return answer with source information
+        logger.info("🤖 Answer from RAG")
         response_data = {
             "success": True,
             "question": request.question,
             "answer": answer,
             "source": "rag",
+            "data_source": "RAG",
             "chunks_used": len(similar_chunks),
             "source_documents": [
                 {
@@ -351,3 +430,76 @@ async def chat(request: ChatRequest):
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to process question: {str(e)}"
         )
+
+
+@router.get("/cache/info", response_model=dict)
+async def get_cache_info():
+    """
+    Get Redis cache statistics and information
+    
+    Returns:
+    - connected: Whether Redis is connected
+    - faq_cached_items: Number of cached FAQ answers
+    - redis_memory_used: Memory usage by Redis
+    - redis_version: Redis server version
+    - uptime_seconds: Redis server uptime
+    """
+    try:
+        redis_cache = get_redis_cache()
+        cache_info = redis_cache.get_cache_info()
+        
+        if cache_info:
+            logger.info(f"Cache info retrieved: {cache_info['faq_cached_items']} items cached")
+            return {
+                "success": True,
+                "cache_info": cache_info
+            }
+        else:
+            logger.warning("Redis cache not available")
+            return {
+                "success": False,
+                "cache_info": {
+                    "connected": False,
+                    "message": "Redis cache not available"
+                }
+            }
+    except Exception as e:
+        logger.error(f"❌ Error getting cache info: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get cache info: {str(e)}"
+        )
+
+
+@router.delete("/cache/clear", response_model=dict)
+async def clear_faq_cache():
+    """
+    Clear all FAQ cache entries (use with caution)
+    
+    Returns:
+    - success: Whether cache was cleared
+    - message: Status message
+    """
+    try:
+        redis_cache = get_redis_cache()
+        result = redis_cache.clear_all()
+        
+        if result:
+            logger.info("✅ FAQ cache cleared successfully")
+            return {
+                "success": True,
+                "message": "All FAQ cache entries cleared successfully"
+            }
+        else:
+            logger.warning("Redis cache not available for clearing")
+            return {
+                "success": False,
+                "message": "Redis cache not available"
+            }
+    except Exception as e:
+        logger.error(f"❌ Error clearing cache: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to clear cache: {str(e)}"
+        )
+

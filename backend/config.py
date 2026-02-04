@@ -39,6 +39,12 @@ class Settings:
     MILVUS_PORT: int = int(os.getenv("MILVUS_PORT", "19530"))
     MILVUS_COLLECTION_NAME: str = os.getenv("MILVUS_COLLECTION_NAME", "pdf_embeddings")
     
+    # ==================== REDIS ====================
+    REDIS_HOST: str = os.getenv("REDIS_HOST", "localhost")
+    REDIS_PORT: int = int(os.getenv("REDIS_PORT", "6379"))
+    REDIS_DB: int = int(os.getenv("REDIS_DB", "0"))
+    REDIS_FAQ_TTL_MINUTES: int = int(os.getenv("REDIS_FAQ_TTL_MINUTES", "20"))
+    
     # ==================== EMBEDDING ====================
     EMBEDDING_MODEL: str = os.getenv("EMBEDDING_MODEL", "sentence-transformers/all-MiniLM-L6-v2")
     EMBEDDING_DIMENSION: int = int(os.getenv("EMBEDDING_DIMENSION", "384"))
