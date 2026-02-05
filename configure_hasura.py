@@ -1,8 +1,10 @@
 """
 Track tables in Hasura and configure permissions
+
+Yes, we need to execute this file to create the GraphQL schema, track tables, set relationships, and configure permissions in Hasura.
 """
-import requests
-import json
+import requests   # to call Hasura HTTP API
+import json        # to handle JSON payloads
 
 HASURA_URL = "http://localhost:8081/v1/metadata"
 HASURA_ADMIN_SECRET = "myadminsecret"
@@ -13,7 +15,7 @@ headers = {
 }
 
 # Track tables
-tables_to_track = ["workflows", "nodes", "edges", "faqs"]
+tables_to_track = ["workflows", "nodes", "edges", "faqs", "chat_sessions", "chat_messages", "pdf_documents"]
 
 for table in tables_to_track:
     payload = {
@@ -86,6 +88,27 @@ relationships = [
                     "name": "edges"
                 },
                 "column": "workflow_id"
+            }
+        }
+    },
+    # Chat relationships
+    {
+        "table": "chat_messages",
+        "name": "chat_session",
+        "using": {
+            "foreign_key_constraint_on": "session_id"
+        }
+    },
+    {
+        "table": "chat_sessions",
+        "name": "messages",
+        "using": {
+            "foreign_key_constraint_on": {
+                "table": {
+                    "schema": "public",
+                    "name": "chat_messages"
+                },
+                "column": "session_id"
             }
         }
     }

@@ -1,10 +1,11 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { useAuth } from '@/app/context/AuthContext';
 import { sendDirectChatMessage } from '../services/api';
 import { createSession, getMessages, getSession, updateSession } from '../services/sessions';
+import { wsClient } from '../services/websocket';
 import Message from './Message';
 
 export default function ChatBox({ workflowId, continueSessionId = null }) {
@@ -22,6 +23,11 @@ export default function ChatBox({ workflowId, continueSessionId = null }) {
   const [sessionTitle, setSessionTitle] = useState('New Chat');
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const [editTitleValue, setEditTitleValue] = useState('');
+  const [useWebSocket, setUseWebSocket] = useState(true);
+  const [wsStatus, setWsStatus] = useState('disconnected');
+  
+  // Ref to track WebSocket mode across route changes
+  const wsModeRef = useRef(true);
 
   // ==================== HELPER FUNCTIONS ====================
   
@@ -189,13 +195,77 @@ export default function ChatBox({ workflowId, continueSessionId = null }) {
     // If no URL session, do nothing - wait for first message to create session
   }, [urlSessionId, user?.user_id]);
 
+  // ==================== WEBSOCKET SETUP ====================
+
+  /**
+   * Setup WebSocket connection and handlers
+   */
+  useEffect(() => {
+    if (!useWebSocket) {
+      console.log('Mode: REST API 📡');
+      // Disconnect if WebSocket was previously connected
+      if (wsClient.isConnected()) {
+        wsClient.disconnect();
+      }
+      wsModeRef.current = false;
+      return;
+    }
+
+    console.log('Mode: WebSocket 🔌');
+    wsModeRef.current = true;
+    
+    // Clear old callbacks before setting up new ones
+    wsClient.clearCallbacks();
+    
+    // Connect to WebSocket
+    wsClient.connect('ws://localhost:8000/ws/chat');
+
+    // Handle incoming messages
+    wsClient.onMessage((data) => {
+      if (data.type === 'processing') {
+        console.log('WebSocket: Processing...');
+        return;
+      }
+      
+      if (data.type === 'response') {
+        setLoading(false);
+        const { botText, answers, targetNodes, source } = parseApiResponse(data);
+        setMessages(prev => [...prev, {
+          type: 'bot',
+          text: botText,
+          answers: answers,
+          targetNodes: targetNodes,
+          source: source,
+        }]);
+      }
+    });
+
+    // Handle connection status
+    wsClient.onStatus((status) => {
+      setWsStatus(status);
+      if (status === 'error' || status === 'failed') {
+        console.log('WebSocket: Failed, switching to REST API ⚠️');
+        setError('WebSocket connection failed. Switching to REST API.');
+        setUseWebSocket(false);
+      }
+    });
+
+    // Cleanup only when explicitly disabling WebSocket (not on route change)
+    return () => {
+      // Only disconnect if user explicitly disabled WebSocket
+      if (!wsModeRef.current) {
+        wsClient.disconnect();
+      }
+    };
+  }, [useWebSocket]);
+
   // ==================== MESSAGE HANDLING ====================
 
   /**
    * Main message sending logic
    * 1. Add user message to UI immediately
    * 2. Create session if needed
-   * 3. Send to backend
+   * 3. Send to backend (via WebSocket or REST)
    * 4. Add bot response
    */
   const sendMessage = async (messageText) => {
@@ -224,18 +294,28 @@ export default function ChatBox({ workflowId, continueSessionId = null }) {
         }
       }
 
-      // Step 3: Send message to backend with logged-in user_id
-      const response = await sendDirectChatMessage(messageText, currentSessionId, user.user_id);
-      
-      // Step 4: Parse response and add to UI
-      const { botText, answers, targetNodes, source } = parseApiResponse(response);
-      setMessages(prev => [...prev, {
-        type: 'bot',
-        text: botText,
-        answers: answers,
-        targetNodes: targetNodes,
-        source: source,
-      }]);
+      // Step 3: Send message to backend
+      if (useWebSocket && wsClient.isConnected()) {
+        console.log('Sending via WebSocket 🔌');
+        // Use WebSocket
+        wsClient.sendMessage(messageText, user.user_id, String(currentSessionId));
+        // Response will be handled in WebSocket onMessage callback
+      } else {
+        console.log('Sending via REST API 📡');
+        // Use REST API (existing logic)
+        const response = await sendDirectChatMessage(messageText, currentSessionId, user.user_id);
+        
+        // Step 4: Parse response and add to UI
+        const { botText, answers, targetNodes, source } = parseApiResponse(response);
+        setMessages(prev => [...prev, {
+          type: 'bot',
+          text: botText,
+          answers: answers,
+          targetNodes: targetNodes,
+          source: source,
+        }]);
+        setLoading(false);
+      }
     } catch (err) {
       const errorText = err instanceof Error ? err.message : 'Failed to get response';
       setError(errorText);
@@ -243,7 +323,6 @@ export default function ChatBox({ workflowId, continueSessionId = null }) {
         type: 'bot',
         text: `Error: ${errorText}`,
       }]);
-    } finally {
       setLoading(false);
     }
   };
@@ -326,12 +405,32 @@ export default function ChatBox({ workflowId, continueSessionId = null }) {
             )}
           </div>
           <div className="header-actions">
+            <button 
+              onClick={() => {
+                const newState = !useWebSocket;
+                console.log(newState ? 'Switching to WebSocket 🔌' : 'Switching to REST API 📡');
+                setUseWebSocket(newState);
+              }} 
+              className={`ws-toggle-btn ${useWebSocket ? 'active' : ''}`}
+              title={useWebSocket ? 'Using WebSocket (Real-time)' : 'Using REST API'}
+            >
+              {useWebSocket ? '🔌 WS' : '📡 API'}
+            </button>
             <button onClick={handleNewChat} className="action-btn" title="New conversation">
               ➕
             </button>
           </div>
         </div>
-        <p className="subtitle">Chat powered by knowledge graph and AI</p>
+        <p className="subtitle">
+          Chat powered by knowledge graph and AI 
+          {useWebSocket && (
+            <span className={`ws-status ws-status-${wsStatus}`}>
+              {wsStatus === 'connected' ? ' • WebSocket Connected' : 
+               wsStatus === 'connecting' ? ' • Connecting...' : 
+               wsStatus === 'error' ? ' • Connection Error' : ''}
+            </span>
+          )}
+        </p>
       </div>
 
       <div className="chat-window">
@@ -541,6 +640,50 @@ export default function ChatBox({ workflowId, continueSessionId = null }) {
         .action-btn:hover {
           background-color: #f0f0f0;
           border-color: #999;
+        }
+
+        .ws-toggle-btn {
+          padding: 6px 12px;
+          background-color: transparent;
+          border: 1px solid #d1d5db;
+          border-radius: 6px;
+          font-size: 13px;
+          cursor: pointer;
+          transition: all 0.2s;
+          font-weight: 500;
+        }
+
+        .ws-toggle-btn:hover {
+          background-color: #f0f0f0;
+          border-color: #999;
+        }
+
+        .ws-toggle-btn.active {
+          background-color: #27ae60;
+          color: white;
+          border-color: #27ae60;
+        }
+
+        .ws-toggle-btn.active:hover {
+          background-color: #229954;
+          border-color: #229954;
+        }
+
+        .ws-status {
+          font-size: 11px;
+          margin-left: 8px;
+        }
+
+        .ws-status-connected {
+          color: #27ae60;
+        }
+
+        .ws-status-connecting {
+          color: #f39c12;
+        }
+
+        .ws-status-error {
+          color: #e74c3c;
         }
 
         .chat-header .subtitle {

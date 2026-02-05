@@ -29,13 +29,14 @@ app.add_middleware(
 )
 
 # Import routes after app initialization to avoid circular imports
-from routes import chat, pdf, auth, sessions
+from routes import chat, pdf, auth, sessions, websocket_chat
 
 # Include routers (only PDF and Chat - Workflows/FAQs handled by Hasura)
 app.include_router(chat.router)
 app.include_router(pdf.router)
 app.include_router(auth.router)
 app.include_router(sessions.router)
+app.include_router(websocket_chat.router)
 
 
 @app.get("/health")

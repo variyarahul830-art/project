@@ -44,6 +44,11 @@ class MilvusService:
                 port=self.port
             )
             logger.info(f"✅ Connected to Milvus at {self.host}:{self.port}")
+            
+            # Try to load existing collection
+            if utility.has_collection(self.collection_name):
+                self.collection = Collection(name=self.collection_name)
+                logger.info(f"✓ Loaded existing collection: {self.collection_name}")
         except Exception as e:
             logger.error(f"❌ Failed to connect to Milvus: {str(e)}")
             raise
