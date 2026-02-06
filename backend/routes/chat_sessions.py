@@ -21,7 +21,6 @@ router = APIRouter(prefix="/api/chat-sessions", tags=["Chat Sessions"])
 class CreateSessionRequest(BaseModel):
     user_id: str
     title: str = "New Chat Session"
-    category: str = "General"
 
 
 class AddMessageRequest(BaseModel):
@@ -32,7 +31,6 @@ class AddMessageRequest(BaseModel):
 
 class UpdateSessionRequest(BaseModel):
     title: str
-    category: str
 
 
 # ==================== API Endpoints ====================
@@ -44,7 +42,6 @@ async def create_chat_session(request: CreateSessionRequest):
     
     - **user_id**: The ID of the user (required)
     - **title**: Session title (optional, defaults to "New Chat Session")
-    - **category**: Session category (optional, defaults to "General")
     """
     try:
         session_id = f"session_{datetime.utcnow().timestamp()}_{uuid.uuid4().hex[:8]}"
@@ -54,8 +51,7 @@ async def create_chat_session(request: CreateSessionRequest):
         session = await hasura_client.create_chat_session(
             session_id=session_id,
             user_id=request.user_id,
-            title=request.title,
-            category=request.category
+            title=request.title
         )
         
         if not session:
@@ -235,11 +231,10 @@ async def add_message_to_session(session_id: str, request: AddMessageRequest):
 @router.put("/{session_id}", response_model=dict)
 async def update_session(session_id: str, request: UpdateSessionRequest):
     """
-    Update a chat session's title and category
+    Update a chat session's title
     
     - **session_id**: The ID of the session (required)
     - **title**: New session title (required)
-    - **category**: New session category (required)
     """
     try:
         logger.info(f"Updating session {session_id}")
@@ -254,8 +249,7 @@ async def update_session(session_id: str, request: UpdateSessionRequest):
         
         result = await hasura_client.update_chat_session(
             session_id=session_id,
-            title=request.title,
-            category=request.category
+            title=request.title
         )
         
         if not result:

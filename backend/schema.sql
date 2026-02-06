@@ -86,11 +86,9 @@ CREATE INDEX idx_pdf_documents_upload_date ON pdf_documents(upload_date DESC);
 CREATE INDEX idx_pdf_documents_is_processed ON pdf_documents(is_processed);
 -- ==================== CHAT_SESSIONS TABLE ====================
 CREATE TABLE chat_sessions (
-    id SERIAL PRIMARY KEY,
-    session_id VARCHAR(255) NOT NULL UNIQUE,
+    session_id VARCHAR(255) PRIMARY KEY,
     user_id VARCHAR(255) NOT NULL,
     title VARCHAR(500) DEFAULT 'New Chat',
-    category VARCHAR(100) DEFAULT 'General',
     total_messages INTEGER DEFAULT 0,
     is_active INTEGER DEFAULT 1,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -98,7 +96,6 @@ CREATE TABLE chat_sessions (
 );
 
 CREATE INDEX idx_chat_sessions_user_id ON chat_sessions(user_id);
-CREATE INDEX idx_chat_sessions_session_id ON chat_sessions(session_id);
 CREATE INDEX idx_chat_sessions_created_at ON chat_sessions(created_at DESC);
 
 -- ==================== CHAT_MESSAGES TABLE ====================

@@ -91,11 +91,9 @@ CREATE INDEX IF NOT EXISTS idx_pdf_documents_minio_path ON pdf_documents(minio_p
 
 -- ==================== CHAT SESSIONS TABLE ====================
 CREATE TABLE IF NOT EXISTS chat_sessions (
-    id SERIAL PRIMARY KEY,
-    session_id VARCHAR(255) NOT NULL UNIQUE,
+    session_id VARCHAR(255) PRIMARY KEY,
     user_id VARCHAR(255) NOT NULL,
     title VARCHAR(500) DEFAULT 'New Chat Session',
-    category VARCHAR(255) DEFAULT 'General',
     total_messages INTEGER DEFAULT 0,
     is_active BOOLEAN DEFAULT true,
     created_at TIMESTAMP DEFAULT NOW(),
@@ -104,7 +102,6 @@ CREATE TABLE IF NOT EXISTS chat_sessions (
 
 -- Create indexes for chat_sessions
 CREATE INDEX IF NOT EXISTS idx_chat_sessions_user_id ON chat_sessions(user_id);
-CREATE INDEX IF NOT EXISTS idx_chat_sessions_session_id ON chat_sessions(session_id);
 CREATE INDEX IF NOT EXISTS idx_chat_sessions_created_at ON chat_sessions(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_chat_sessions_is_active ON chat_sessions(is_active);
 

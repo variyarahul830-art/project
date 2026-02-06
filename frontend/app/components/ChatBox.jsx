@@ -143,7 +143,7 @@ export default function ChatBox({ workflowId, continueSessionId = null }) {
       
       const session = sessionResult.session;
       
-      setSessionId(session.id);
+      setSessionId(session.session_id);
       setSessionTitle(session.title || 'New Chat');
       
       // Only load messages if UI is empty (don't overwrite newly added messages)
@@ -172,9 +172,9 @@ export default function ChatBox({ workflowId, continueSessionId = null }) {
       if (!user?.user_id) {
         throw new Error('User not authenticated');
       }
-      const result = await createSession(sessionTitle, 'General');
+      const result = await createSession(sessionTitle);
       if (result.session) {
-        const newSessionId = result.session.id;
+        const newSessionId = result.session.session_id;
         setSessionId(newSessionId);
         return newSessionId;
       }

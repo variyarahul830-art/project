@@ -25,12 +25,10 @@ router = APIRouter(prefix="/api/sessions", tags=["Sessions"])
 
 class CreateSessionRequest(BaseModel):
     title: str = "New Chat"
-    category: str = "General"
 
 
 class UpdateSessionRequest(BaseModel):
     title: str
-    category: Optional[str] = None
 
 
 @router.get("/")
@@ -52,14 +50,8 @@ async def get_session(session_id: str, current_user_id: int = Depends(get_curren
     try:
         logger.info(f"📋 Fetching session: {session_id} for user: {current_user_id}")
         
-        # Try to query by session_id first (UUID format)
+        # Query by session_id
         session = await get_chat_session(session_id)
-        
-        # If not found and session_id looks numeric, it might be the 'id' field
-        # Query by id instead by getting all sessions and filtering
-        if not session:
-            sessions = await get_user_chat_sessions(str(current_user_id))
-            session = next((s for s in sessions if str(s.get("id")) == session_id), None)
         
         if not session:
             raise HTTPException(status_code=404, detail="Session not found")
@@ -88,8 +80,7 @@ async def create_session(
         result = await create_chat_session(
             session_id=session_id,
             user_id=str(current_user_id),
-            title=request.title,
-            category=request.category
+            title=request.title
         )
         return {"session": result}
     except Exception as e:
@@ -103,18 +94,10 @@ async def update_session(
     request: UpdateSessionRequest,
     current_user_id: int = Depends(get_current_user)
 ):
-    """Update session title/category - verifies ownership"""
+    """Update session title - verifies ownership"""
     try:
         # First verify ownership
         session = await get_chat_session(session_id)
-        
-        # If not found and session_id looks numeric, it might be the 'id' field
-        actual_session_id = session_id
-        if not session:
-            sessions = await get_user_chat_sessions(str(current_user_id))
-            session = next((s for s in sessions if str(s.get("id")) == session_id), None)
-            if session:
-                actual_session_id = session.get("session_id")
         
         if not session:
             raise HTTPException(status_code=404, detail="Session not found")
@@ -122,11 +105,10 @@ async def update_session(
         if session.get("user_id") != str(current_user_id):
             raise HTTPException(status_code=403, detail="Access denied")
         
-        logger.info(f"✏️ Updating session: {actual_session_id}")
+        logger.info(f"✏️ Updating session: {session_id}")
         result = await update_chat_session(
-            session_id=actual_session_id,
-            title=request.title,
-            category=request.category or "General"
+            session_id=session_id,
+            title=request.title
         )
         return {"success": True}
     except HTTPException:
@@ -146,22 +128,14 @@ async def delete_session(
         # First verify ownership
         session = await get_chat_session(session_id)
         
-        # If not found and session_id looks numeric, it might be the 'id' field
-        actual_session_id = session_id
-        if not session:
-            sessions = await get_user_chat_sessions(str(current_user_id))
-            session = next((s for s in sessions if str(s.get("id")) == session_id), None)
-            if session:
-                actual_session_id = session.get("session_id")
-        
         if not session:
             raise HTTPException(status_code=404, detail="Session not found")
         
         if session.get("user_id") != str(current_user_id):
             raise HTTPException(status_code=403, detail="Access denied")
         
-        logger.info(f"🗑️ Deleting session: {actual_session_id}")
-        result = await delete_chat_session(actual_session_id)
+        logger.info(f"🗑️ Deleting session: {session_id}")
+        result = await delete_chat_session(session_id)
         return {"success": True}
     except HTTPException:
         raise
@@ -179,13 +153,6 @@ async def get_messages(
     try:
         # Verify session ownership first
         session = await get_chat_session(session_id)
-        
-        # If not found and session_id looks numeric, it might be the 'id' field
-        if not session:
-            sessions = await get_user_chat_sessions(str(current_user_id))
-            session = next((s for s in sessions if str(s.get("id")) == session_id), None)
-            if session:
-                session_id = session.get("session_id")  # Use the actual session_id for querying messages
         
         if not session:
             raise HTTPException(status_code=404, detail="Session not found")

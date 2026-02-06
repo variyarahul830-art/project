@@ -45,20 +45,20 @@ export async function getSession(sessionId) {
   return handleError(response);
 }
 
-export async function createSession(title = 'New Chat', category = 'General') {
+export async function createSession(title = 'New Chat') {
   const response = await fetch(`${API_BASE_URL}/api/sessions/`, {
     method: 'POST',
     headers: getAuthHeader(),
-    body: JSON.stringify({ title, category }),
+    body: JSON.stringify({ title }),
   });
   return handleError(response);
 }
 
-export async function updateSession(sessionId, title, category = 'General') {
+export async function updateSession(sessionId, title) {
   const response = await fetch(`${API_BASE_URL}/api/sessions/${sessionId}`, {
     method: 'PUT',
     headers: getAuthHeader(),
-    body: JSON.stringify({ title, category }),
+    body: JSON.stringify({ title }),
   });
   return handleError(response);
 }

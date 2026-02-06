@@ -788,8 +788,7 @@ async def update_pdf_processing_status(
 async def create_chat_session(
     session_id: str,
     user_id: str,
-    title: str = "New Chat Session",
-    category: str = "General"
+    title: str = "New Chat Session"
 ):
     """Create a new chat session"""
     mutation = """
@@ -797,19 +796,15 @@ async def create_chat_session(
         $sessionId: String!
         $userId: String!
         $title: String!
-        $category: String!
     ) {
         insert_chat_sessions_one(object: {
             session_id: $sessionId
             user_id: $userId
             title: $title
-            category: $category
         }) {
-            id
             session_id
             user_id
             title
-            category
             total_messages
             is_active
             created_at
@@ -822,8 +817,7 @@ async def create_chat_session(
         {
             "sessionId": session_id,
             "userId": user_id,
-            "title": title,
-            "category": category
+            "title": title
         }
     )
     return result.get("insert_chat_sessions_one")
@@ -837,11 +831,9 @@ async def get_user_chat_sessions(user_id: str):
             where: {user_id: {_eq: $userId}, is_active: {_eq: true}}
             order_by: {updated_at: desc}
         ) {
-            id
             session_id
             user_id
             title
-            category
             total_messages
             is_active
             created_at
@@ -858,11 +850,9 @@ async def get_chat_session(session_id: str):
     query = """
     query GetChatSession($sessionId: String!) {
         chat_sessions(where: {session_id: {_eq: $sessionId}}) {
-            id
             session_id
             user_id
             title
-            category
             total_messages
             is_active
             created_at
@@ -991,20 +981,18 @@ async def update_session_message_count(session_id: str):
     )
 
 
-async def update_chat_session(session_id: str, title: str, category: str):
-    """Update a chat session's title and category"""
+async def update_chat_session(session_id: str, title: str):
+    """Update a chat session's title"""
     mutation = """
-    mutation UpdateChatSession($sessionId: String!, $title: String!, $category: String!) {
+    mutation UpdateChatSession($sessionId: String!, $title: String!) {
         update_chat_sessions(
             where: {session_id: {_eq: $sessionId}}
-            _set: {title: $title, category: $category}
+            _set: {title: $title}
         ) {
             affected_rows
             returning {
-                id
                 session_id
                 title
-                category
                 updated_at
             }
         }
@@ -1012,7 +1000,7 @@ async def update_chat_session(session_id: str, title: str, category: str):
     """
     result = await hasura.execute(
         mutation,
-        {"sessionId": session_id, "title": title, "category": category}
+        {"sessionId": session_id, "title": title}
     )
     return result.get("update_chat_sessions", {}).get("returning", [])
 

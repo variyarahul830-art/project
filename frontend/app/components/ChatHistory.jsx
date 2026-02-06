@@ -88,11 +88,11 @@ export default function ChatHistory() {
       setLoading(true);
       setError(null);
       
-      const session = sessions.find(s => s.id === sessionId);
-      await updateSession(sessionId, editTitle, session?.category || 'general');
+      const session = sessions.find(s => s.session_id === sessionId);
+      await updateSession(sessionId, editTitle);
       
       setSessions(prev => prev.map(s => 
-        s.id === sessionId ? { ...s, title: editTitle } : s
+        s.session_id === sessionId ? { ...s, title: editTitle } : s
       ));
       setEditingSession(null);
       setEditTitle('');
@@ -120,7 +120,7 @@ export default function ChatHistory() {
       
       await deleteSession(sessionId);
       
-      const updatedSessions = sessions.filter(s => s.id !== sessionId);
+      const updatedSessions = sessions.filter(s => s.session_id !== sessionId);
       setSessions(updatedSessions);
       
       if (selectedSession === sessionId) {
@@ -195,14 +195,14 @@ export default function ChatHistory() {
             <div className={styles.sessionsGrid}>
               {sessions.map(session => (
                 <div
-                  key={session.id}
+                  key={session.session_id}
                   className={`${styles.sessionCard} ${
-                    selectedSession === session.id ? styles.active : ''
+                    selectedSession === session.session_id ? styles.active : ''
                   }`}
-                  onClick={() => !editingSession && loadMessages(session.id)}
+                  onClick={() => !editingSession && loadMessages(session.session_id)}
                 >
                   <div className={styles.sessionHeader}>
-                    {editingSession === session.id ? (
+                    {editingSession === session.session_id ? (
                       <input
                         type="text"
                         value={editTitle}
@@ -214,7 +214,6 @@ export default function ChatHistory() {
                     ) : (
                       <h3>{session.title}</h3>
                     )}
-                    <span className={styles.category}>{session.category || 'general'}</span>
                   </div>
                   <div className={styles.sessionInfo}>
                     <span className={styles.messageCount}>
@@ -232,9 +231,9 @@ export default function ChatHistory() {
                   
                   {/* Edit buttons */}
                   <div className={styles.sessionActions} onClick={(e) => e.stopPropagation()}>
-                    {editingSession === session.id ? (
+                    {editingSession === session.session_id ? (
                       <>
-                        <button onClick={() => handleSaveEdit(session.id)} className={styles.saveBtn}>
+                        <button onClick={() => handleSaveEdit(session.session_id)} className={styles.saveBtn}>
                           ✓ Save
                         </button>
                         <button onClick={handleCancelEdit} className={styles.cancelBtn}>
@@ -244,14 +243,14 @@ export default function ChatHistory() {
                     ) : (
                       <>
                         <button 
-                          onClick={() => handleEditSession(session.id, session.title)}
+                          onClick={() => handleEditSession(session.session_id, session.title)}
                           className={styles.editBtn}
                           title="Edit session name"
                         >
                           ✏️ Edit
                         </button>
                         <button 
-                          onClick={() => handleDeleteSession(session.id)}
+                          onClick={() => handleDeleteSession(session.session_id)}
                           className={styles.deleteBtn}
                           title="Delete session"
                         >
@@ -277,7 +276,7 @@ export default function ChatHistory() {
             <>
               <div className={styles.messagesHeader}>
                 <h2>
-                  {sessions.find(s => s.id === selectedSession)?.title || 'Conversation'}
+                  {sessions.find(s => s.session_id === selectedSession)?.title || 'Conversation'}
                 </h2>
                 <div className={styles.headerActions}>
                   <button onClick={() => handleContinueChat(selectedSession)} className={styles.continueBtn}>
