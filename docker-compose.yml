@@ -164,3 +164,80 @@ services:
       - NEXT_PUBLIC_API_URL=http://localhost:8000
     networks:
       - default
+
+  rabbitmq:
+    image: rabbitmq:3.12-management
+    container_name: rabbitmq
+    restart: always
+    ports:
+      - "5672:5672"      # AMQP port (for message publishing/consuming)
+      - "15672:15672"    # Management console port
+    environment:
+      RABBITMQ_DEFAULT_USER: guest
+      RABBITMQ_DEFAULT_PASS: guest
+    volumes:
+      - ./volumes/rabbitmq:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+      
+
+  celery-worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.celery
+    container_name: celery-worker
+    restart: always
+    command: python -m celery -A celery_config worker --loglevel=info --concurrency=4
+    working_dir: /app
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    env_file:
+      - .env.docker
+    environment:
+      - RABBITMQ_HOST=rabbitmq
+      - RABBITMQ_PORT=5672
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - PYTHONUNBUFFERED=1
+      - PYTHONPATH=/app
+    volumes:
+      - ./backend:/app
+    networks:
+      - default
+
+  
+  flower:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: flower
+    restart: always
+    command: python -m celery -A celery_config flower --port=5555 --broker=amqp://guest:guest@rabbitmq:5672//
+    ports:
+      - "5555:5555"
+    depends_on:
+      - rabbitmq
+      - celery-worker
+    env_file:
+      - .env.docker
+    environment:
+      - CELERY_BROKER_URL=amqp://guest:guest@rabbitmq:5672//
+      - CELERY_RESULT_BACKEND=redis://redis:6379/1
+      - RABBITMQ_HOST=rabbitmq
+      - RABBITMQ_PORT=5672
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - PYTHONUNBUFFERED=1
+      - PYTHONPATH=/app
+    volumes:
+      - ./backend:/app
+    working_dir: /app
+    networks:
+      - default

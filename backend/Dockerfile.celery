@@ -1,0 +1,33 @@
+# Dockerfile for Celery worker - async task processing
+
+FROM python:3.11-slim
+
+# Set working directory
+WORKDIR /app
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    gcc \
+    g++ \
+    postgresql-client \
+    python3-dev \
+    bash \
+    && rm -rf /var/lib/apt/lists/*
+
+# Upgrade pip, setuptools, and wheel
+RUN pip install --no-cache-dir --upgrade pip setuptools wheel
+
+# Copy requirements
+COPY requirements.txt .
+
+# Install Python dependencies
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy backend application code
+COPY . .
+
+# Set Python path
+ENV PYTHONPATH=/app
+
+# Default command to run Celery worker
+CMD ["python", "-m", "celery", "-A", "celery_config", "worker", "--loglevel=info", "--concurrency=4"]
