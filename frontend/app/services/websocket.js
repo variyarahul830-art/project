@@ -32,7 +32,7 @@ class WebSocketClient {
         try {
           const data = JSON.parse(event.data);
           console.log('WebSocket: Message received -', data.type || 'response');
-          this.messageCallbacks.forEach(callback => callback(data));
+          this.messageCallbacks.forEach(callback => callback(data)); 
         } catch (error) {
           console.error('WebSocket: Parse error -', error.message);
         }
@@ -84,6 +84,10 @@ class WebSocketClient {
 
   onStatus(callback) {
     this.statusCallbacks.push(callback);
+  }
+
+  notifyStatus(status) {
+    this.statusCallbacks.forEach(callback => callback(status));
   }
 
   clearCallbacks() {

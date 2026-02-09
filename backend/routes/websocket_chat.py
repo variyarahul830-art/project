@@ -4,20 +4,26 @@ import logging
 import json
 import uuid
 from datetime import datetime
+import asyncio
+import redis.asyncio as aioredis
 from services import hasura_client
 from services.embeddings import EmbeddingGenerator
 from services.milvus_service import MilvusService
 from services.llm_service import LLMService
 from services.redis_cache import get_redis_cache
+from tasks.llm_tasks import generate_llm_answer_task
+from config import settings
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/ws", tags=["WebSocket"])
 
-# Store active WebSocket connections
+# Store active WebSocket connections mapped by client_id
+# Also track pending tasks: task_id -> client_id
 class ConnectionManager:
     def __init__(self):
         self.active_connections: Dict[str, WebSocket] = {}
+        self.pending_tasks: Dict[str, str] = {}  # task_id -> client_id
 
     async def connect(self, websocket: WebSocket, client_id: str):
         await websocket.accept()
@@ -28,35 +34,72 @@ class ConnectionManager:
         if client_id in self.active_connections:
             del self.active_connections[client_id]
             logger.info(f"Client {client_id} disconnected. Total connections: {len(self.active_connections)}")
+        
+        # Clean up pending tasks for this client
+        tasks_to_remove = [task_id for task_id, cid in self.pending_tasks.items() if cid == client_id]
+        for task_id in tasks_to_remove:
+            del self.pending_tasks[task_id]
 
     async def send_message(self, client_id: str, message: dict):
         if client_id in self.active_connections:
             await self.active_connections[client_id].send_json(message)
 
+    def register_pending_task(self, task_id: str, client_id: str):
+        """Register a pending task for a client"""
+        self.pending_tasks[task_id] = client_id
+    
+    async def send_to_task_client(self, task_id: str, message: dict):
+        """Send message to the client waiting for this task"""
+        if task_id in self.pending_tasks:
+            client_id = self.pending_tasks[task_id]
+            await self.send_message(client_id, message)
+            del self.pending_tasks[task_id]
+            logger.info(f"Sent result to client for task {task_id}")
+        else:
+            logger.warning(f"No client found for task {task_id}")
+    
+    async def subscribe_to_redis_results(self, client_id: str, websocket: WebSocket):
+        """Subscribe to Redis pub/sub for task results for this client"""
+        try:
+            redis_client = await aioredis.from_url(
+                f"redis://{settings.REDIS_HOST}:{settings.REDIS_PORT}/0",
+                decode_responses=True
+            )
+            pubsub = redis_client.pubsub()
+            channel = f"rag_result:{client_id}"
+            await pubsub.subscribe(channel)
+            
+            async for message in pubsub.listen():
+                if message['type'] == 'message':
+                    try:
+                        data = json.loads(message['data'])
+                        await self.send_message(client_id, data)
+                    except Exception as e:
+                        logger.error(f"Error processing Redis message: {e}")
+        except Exception as e:
+            logger.error(f"Error subscribing to Redis: {e}")
+
 manager = ConnectionManager()
 
 
-async def process_chat_message(question: str, user_id: str, session_id: str):
+async def process_chat_message(question: str, user_id: str, session_id: str, client_id: str = None):
     """
     Process chat message using the same logic as the REST API
     Returns the response data
     """
     try:
-        logger.info(f"Processing WebSocket question: {question}")
+        logger.info(f"Question: {question[:80]}...")
         
         # Resolve session_id if numeric
         actual_session_id = session_id
         if session_id and user_id:
             if session_id.isdigit():
-                logger.info(f"Converting numeric session ID {session_id} to actual session_id")
                 sessions = await hasura_client.get_user_chat_sessions(user_id)
                 session = next((s for s in sessions if str(s.get("id")) == session_id), None)
                 if session:
                     actual_session_id = session.get("session_id")
-                    logger.info(f"Resolved session_id: {actual_session_id}")
 
         # Step 1: Try exact match on source node
-        logger.info("Step 1: Trying exact text match on source nodes...")
         source_node = await hasura_client.get_node_by_text(question, workflow_id=None)
         
         if source_node:
@@ -110,7 +153,6 @@ async def process_chat_message(question: str, user_id: str, session_id: str):
                 return response_data
 
         # Step 2: Try partial/fuzzy matching
-        logger.info("Step 2: Trying partial text match on source nodes...")
         matching_nodes = await hasura_client.search_nodes_by_text(question, workflow_id=None)
         
         if matching_nodes:
@@ -173,7 +215,6 @@ async def process_chat_message(question: str, user_id: str, session_id: str):
                 return response_data
 
         # Step 3: Check Redis cache and FAQs
-        logger.info("Step 3: Checking Redis cache and FAQs...")
         redis_cache = get_redis_cache()
         
         cached_answer = redis_cache.get(question)
@@ -245,8 +286,8 @@ async def process_chat_message(question: str, user_id: str, session_id: str):
             
             return response_data
 
-        # Step 4: RAG fallback
-        logger.info("Step 4: Using RAG (PDF embeddings + LLM)...")
+        # Step 4: RAG fallback - submit async task to RabbitMQ
+        logger.info("Submitting to RabbitMQ for LLM processing...")
         try:
             embedding_generator = EmbeddingGenerator()
             milvus_service = MilvusService()
@@ -273,69 +314,69 @@ async def process_chat_message(question: str, user_id: str, session_id: str):
             search_results = milvus_service.search_embeddings(query_embedding, limit=5)
             
             if search_results and len(search_results) > 0:
-                context_texts = [result["text_chunk"] for result in search_results]
-                context = "\n\n".join(context_texts)
+                message_id = f"msg_{uuid.uuid4().hex[:16]}"
                 
-                answer = llm_service.generate_answer_with_context(
-                    question=question,
-                    context_chunks=search_results
+                # Register pending task for this client
+                if client_id:
+                    manager.register_pending_task(message_id, client_id)
+                
+                # Submit async task to RabbitMQ with client_id for result notification
+                logger.info(f"Task submitted: {message_id}")
+                celery_task = generate_llm_answer_task.apply_async(
+                    args=[
+                        question,
+                        search_results,
+                        actual_session_id,
+                        user_id,
+                        message_id,
+                        client_id  # Pass client_id to task
+                    ],
+                    queue='llm_tasks',
+                    task_id=message_id
                 )
                 
+                # Return pending response to client
                 response_data = {
                     "success": True,
                     "question": question,
-                    "answer": answer,
+                    "task_id": celery_task.id,
                     "source": "rag",
-                    "source_documents": search_results,
-                    "context_used": True
+                    "status": "processing",
+                    "message": "Your question is being processed by the LLM..."
                 }
-                
-                # Save to database (without source_documents to avoid serialization issues)
-                if actual_session_id and user_id:
-                    try:
-                        message_id = f"msg_{uuid.uuid4().hex[:16]}"
-                        save_data = {"success": True, "question": question, "answer": answer, "source": "rag", "context_used": True}
-                        await hasura_client.add_chat_message(
-                            message_id=message_id,
-                            session_id=actual_session_id,
-                            user_id=user_id,
-                            question=question,
-                            answer=json.dumps(save_data),
-                            source="rag"
-                        )
-                    except Exception as e:
-                        logger.warning(f"Failed to save chat message: {e}")
                 
                 return response_data
             else:
                 logger.info("No context found, using LLM without context")
-                answer = llm_service.generate_answer_with_context(
-                    question=question,
-                    context_chunks=[]
+                message_id = f"msg_{uuid.uuid4().hex[:16]}"
+                
+                # Register pending task
+                if client_id:
+                    manager.register_pending_task(message_id, client_id)
+                
+                logger.info(f"Task submitted (no context): {message_id}")
+                # Submit task without context
+                celery_task = generate_llm_answer_task.apply_async(
+                    args=[
+                        question,
+                        [],
+                        actual_session_id,
+                        user_id,
+                        message_id,
+                        client_id  # Pass client_id to task
+                    ],
+                    queue='llm_tasks',
+                    task_id=message_id
                 )
                 
                 response_data = {
                     "success": True,
                     "question": question,
-                    "answer": answer,
+                    "task_id": celery_task.id,
                     "source": "rag",
-                    "context_used": False
+                    "status": "processing",
+                    "message": "Your question is being processed..."
                 }
-                
-                # Save to database
-                if actual_session_id and user_id:
-                    try:
-                        message_id = f"msg_{uuid.uuid4().hex[:16]}"
-                        await hasura_client.add_chat_message(
-                            message_id=message_id,
-                            session_id=actual_session_id,
-                            user_id=user_id,
-                            question=question,
-                            answer=answer,
-                            source="rag"
-                        )
-                    except Exception as e:
-                        logger.warning(f"Failed to save chat message: {e}")
                 
                 return response_data
         except Exception as e:
@@ -363,19 +404,20 @@ async def process_chat_message(question: str, user_id: str, session_id: str):
 @router.websocket("/chat")
 async def websocket_chat(websocket: WebSocket):
     """
-    WebSocket endpoint for real-time chat
-    
-    Client sends JSON: {"question": "...", "user_id": "...", "session_id": "..."}
-    Server responds with JSON: same format as REST API
+    WebSocket endpoint for real-time chat with automatic result pushing via Redis pub/sub
     """
     client_id = str(uuid.uuid4())
     await manager.connect(websocket, client_id)
+    
+    # Start background task to subscribe to Redis for task results
+    redis_subscribe_task = asyncio.create_task(manager.subscribe_to_redis_results(client_id, websocket))
     
     try:
         while True:
             # Receive message from client
             data = await websocket.receive_json()
             
+            # Handle normal chat questions
             question = data.get("question", "")
             user_id = data.get("user_id", "")
             session_id = data.get("session_id", "")
@@ -395,7 +437,7 @@ async def websocket_chat(websocket: WebSocket):
             })
             
             # Process the message
-            response = await process_chat_message(question, user_id, session_id)
+            response = await process_chat_message(question, user_id, session_id, client_id)
             
             # Send response
             await manager.send_message(client_id, {
@@ -404,7 +446,9 @@ async def websocket_chat(websocket: WebSocket):
             })
             
     except WebSocketDisconnect:
+        redis_subscribe_task.cancel()
         manager.disconnect(client_id)
     except Exception as e:
         logger.error(f"WebSocket error: {e}", exc_info=True)
+        redis_subscribe_task.cancel()
         manager.disconnect(client_id)

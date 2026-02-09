@@ -2,8 +2,27 @@
 
 import ReactMarkdown from 'react-markdown';
 
-export default function Message({ type, text, answers, targetNodes, onOptionClick, source, isHistorical }) {
+export default function Message({ type, text, answers, targetNodes, onOptionClick, source, isHistorical, isLoading }) {
   const hasAnswers = answers && answers.length > 0;
+  
+  // Show loading indicator for RAG tasks
+  if (isLoading) {
+    return (
+      <div className="message message-bot">
+        <div className="message-avatar">🤖</div>
+        <div className="message-content">
+          <div className="message-text">
+            <p>⏳ {text || 'Processing your question with LLM...'}</p>
+            <div style={{display: 'flex', gap: '4px', marginTop: '8px'}}>
+              <span style={{animation: 'pulse 1.5s infinite', animationDelay: '0s'}}>●</span>
+              <span style={{animation: 'pulse 1.5s infinite', animationDelay: '0.3s'}}>●</span>
+              <span style={{animation: 'pulse 1.5s infinite', animationDelay: '0.6s'}}>●</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
   
   // Clean answer text by removing source citations and prepare for display
   const cleanAnswerText = (answerText, sourceDocuments) => {

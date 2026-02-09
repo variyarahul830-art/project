@@ -228,6 +228,19 @@ export default function ChatBox({ workflowId, continueSessionId = null }) {
       }
       
       if (data.type === 'response') {
+        // Check if this is a RAG task (async processing)
+        if (data.task_id && data.status === 'processing') {
+          // Show waiting message for RAG task
+          setMessages(prev => [...prev, {
+            type: 'bot',
+            text: data.message || 'Processing your question with LLM...',
+            source: 'rag',
+            task_id: data.task_id,
+            isLoading: true
+          }]);
+          return;
+        }
+        
         setLoading(false);
         const { botText, answers, targetNodes, source } = parseApiResponse(data);
         setMessages(prev => [...prev, {
@@ -237,6 +250,24 @@ export default function ChatBox({ workflowId, continueSessionId = null }) {
           targetNodes: targetNodes,
           source: source,
         }]);
+      }
+      
+      if (data.type === 'result') {
+        // RAG task completed
+        setLoading(false);
+        setMessages(prev => {
+          // Find and update the loading message
+          return prev.map(msg => {
+            if (msg.task_id === data.task_id) {
+              return {
+                ...msg,
+                text: data.answer,
+                isLoading: false
+              };
+            }
+            return msg;
+          });
+        });
       }
     });
 
@@ -280,7 +311,7 @@ export default function ChatBox({ workflowId, continueSessionId = null }) {
     setInput('');
     setError(null);
     setLoading(true);
-
+    
     try {
       // Step 2: Ensure we have a session
       let currentSessionId = sessionId;

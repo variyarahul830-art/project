@@ -6,6 +6,7 @@ from services.embeddings import EmbeddingGenerator
 from services.milvus_service import MilvusService
 from services.llm_service import LLMService
 from services.redis_cache import get_redis_cache
+from tasks.llm_tasks import generate_llm_answer_task
 import logging
 import json
 import uuid
@@ -14,6 +15,7 @@ from datetime import datetime
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/chat", tags=["Chat"])
+
 
 @router.post("/", response_model=dict)
 async def chat(request: ChatRequest):
@@ -185,10 +187,12 @@ async def chat(request: ChatRequest):
         
         # Initialize Redis cache
         redis_cache = get_redis_cache()
+        redis_logger = logging.getLogger('redis')
         
         # Step 3a: Check Redis cache first
         cached_answer = redis_cache.get(request.question)
         if cached_answer:
+            redis_logger.info(f"Cache hit - answer found")
             logger.info(f"⚡ Answer from REDIS")
             response_data = {
                 "success": True,
@@ -219,6 +223,7 @@ async def chat(request: ChatRequest):
             return response_data
         
         # Step 3b: Search FAQs (exact match)
+        redis_logger.info(f"Cache miss - searching FAQs...")
         logger.info("Cache miss - Searching FAQs for exact match...")
         faq_exact = await hasura_client.search_faq_exact(request.question)
         
@@ -235,9 +240,10 @@ async def chat(request: ChatRequest):
                 "data_source": "FAQ"
             }
             
-            # ✨ NEW: Cache this FAQ answer for future queries (20 min TTL)
+            # Cache this FAQ answer for future queries (20 min TTL)
             ttl = settings.REDIS_FAQ_TTL_MINUTES
-            logger.info(f"💾 Caching FAQ answer in Redis (TTL: {ttl}min)...")
+            redis_logger.info(f"Caching FAQ answer (TTL: {ttl}min)")
+            logger.info(f"Caching FAQ answer in Redis (TTL: {ttl}min)...")
             redis_cache.set(
                 request.question,
                 {
@@ -359,85 +365,162 @@ async def chat(request: ChatRequest):
         
         logger.info(f"✅ Found {len(similar_chunks)} similar chunks")
         
-        # Step 3: Generate answer using LLM with context
-        logger.info("Generating answer using LLM with Hugging Face...")
+        # Submit async Celery task for LLM answer generation via RabbitMQ
+        logger.info("📤 Submitting LLM answer generation task to RabbitMQ (Celery)...")
         
-        # Get token from settings
-        hf_token = settings.HUGGINGFACE_TOKEN if hasattr(settings, 'HUGGINGFACE_TOKEN') else None
-        if not hf_token:
-            logger.error("HUGGINGFACE_TOKEN not configured in settings")
-            return {
-                "success": False,
-                "question": request.question,
-                "answer": None,
-                "source": "rag",
-                "message": "LLM service not properly configured. Please set HUGGINGFACE_TOKEN.",
-                "chunks_found": len(similar_chunks)
-            }
+        message_id = f"msg_{uuid.uuid4().hex[:16]}"
+        rabbitmq_logger = logging.getLogger('rabbitmq')
         
-        llm_service = LLMService(
-            huggingface_token=hf_token,
-            model_name=settings.LLM_MODEL if hasattr(settings, 'LLM_MODEL') else "meta-llama/Llama-2-7b-chat-hf"
-        )
-        print(request.question)
-        answer = llm_service.generate_answer_with_context(
-            question=request.question,
-            context_chunks=similar_chunks,
-            max_length=512,
-            temperature=0.7
-        )
-        
-        logger.info("✅ Answer generated successfully")
-        
-        # Get unique PDFs with their IDs for download links
-        pdf_doc_map = {}
-        for chunk in similar_chunks:
-            doc_name = chunk.get("document_name")
-            if doc_name and doc_name not in pdf_doc_map:
-                # Get PDF ID from database
-                pdf_id = await hasura_client.get_pdf_id_by_name(doc_name)
-                if pdf_id:
-                    pdf_doc_map[doc_name] = pdf_id
-        
-        # Return answer with source information
-        logger.info("🤖 Answer from RAG")
-        response_data = {
-            "success": True,
-            "question": request.question,
-            "answer": answer,
-            "source": "rag",
-            "data_source": "RAG",
-            "chunks_used": len(similar_chunks),
-            "source_documents": [
-                {
-                    "document": chunk.get("document_name"),
-                    "page": chunk.get("page_number"),
-                    "relevance_score": round(chunk.get("score", 0), 4),
-                    "pdf_id": pdf_doc_map.get(chunk.get("document_name"))
-                } for chunk in similar_chunks
-            ]
-        }
-        
-        # Save question and answer to chat history
-        if actual_session_id and request.user_id:
+        try:
+            # Submit task to RabbitMQ queue
+            rabbitmq_logger.info(f"Task submitted: {message_id}")
+            celery_task = generate_llm_answer_task.apply_async(
+                args=[
+                    request.question,
+                    similar_chunks,
+                    actual_session_id,
+                    request.user_id,
+                    message_id
+                ],
+                queue='llm_tasks',
+                task_id=message_id
+            )
+            
+            logger.info(f"Task submitted with ID: {celery_task.id}")
+            
+            # Wait for task completion with timeout (up to 60 seconds)
+            logger.info(f"Waiting for LLM task to complete (timeout: 60s)...")
+            
             try:
-                message_id = f"msg_{uuid.uuid4().hex[:16]}"
-                logger.info(f"💾 Saving RAG message (session={actual_session_id}, user={request.user_id})")
-                await hasura_client.add_chat_message(
-                    message_id=message_id,
-                    session_id=actual_session_id,
-                    user_id=request.user_id,
-                    question=request.question,
-                    answer=answer,
-                    source="rag"
-                )
-                logger.info(f"✅ RAG message saved")
-            except Exception as e:
-                logger.error(f"❌ Failed to save RAG chat message: {e}", exc_info=True)
-        else:
-            logger.warning(f"⚠️  Skipping RAG save - session_id={actual_session_id}, user_id={request.user_id}")
+                result = celery_task.get(timeout=60)
+                rabbitmq_logger.info(f"Task completed: {celery_task.id}")
+                logger.info(f"Task completed: {result}")
+                
+                response_data = result.get('response_data', {})
+                
+                # Ensure we have a proper response
+                if not response_data.get('success'):
+                    response_data = {
+                        "success": True,
+                        "question": request.question,
+                        "answer": result.get('answer'),
+                        "source": "rag",
+                        "data_source": "RAG",
+                        "chunks_used": len(similar_chunks),
+                        "source_documents": [
+                            {
+                                "document": chunk.get("document_name"),
+                                "page": chunk.get("page_number"),
+                                "relevance_score": round(chunk.get("score", 0), 4)
+                            } for chunk in similar_chunks
+                        ]
+                    }
+                
+                logger.info(f"🤖 Answer from RAG (via RabbitMQ/Celery)")
+                return response_data
+                
+            except Exception as timeout_exc:
+                # Task is still processing - return task ID for client polling
+                rabbitmq_logger.warning(f"⚠️  TASK TIMEOUT:")
+                rabbitmq_logger.warning(f"   Task ID: {celery_task.id}")
+                rabbitmq_logger.warning(f"   Timeout: 60 seconds exceeded")
+                rabbitmq_logger.warning(f"   Task processing in background...")
+                logger.warning(f"⚠️  Task timeout or error: {str(timeout_exc)}")
+                logger.info(f"📋 Returning task ID for client polling: {celery_task.id}")
+                
+                return {
+                    "success": True,
+                    "question": request.question,
+                    "answer": None,
+                    "source": "rag",
+                    "data_source": "RAG_ASYNC",
+                    "task_id": celery_task.id,
+                    "status": "processing",
+                    "message": "Answer is being generated asynchronously. Use task_id to poll for results.",
+                    "chunks_used": len(similar_chunks)
+                }
         
-        return response_data
+        except Exception as task_exc:
+            logger.error(f"❌ Failed to submit Celery task: {str(task_exc)}", exc_info=True)
+            # Fallback to synchronous generation if task submission fails
+            logger.info("⚠️  Falling back to synchronous LLM generation...")
+            
+            # Get token from settings
+            hf_token = settings.HUGGINGFACE_TOKEN if hasattr(settings, 'HUGGINGFACE_TOKEN') else None
+            if not hf_token:
+                logger.error("HUGGINGFACE_TOKEN not configured in settings")
+                return {
+                    "success": False,
+                    "question": request.question,
+                    "answer": None,
+                    "source": "rag",
+                    "message": "LLM service not properly configured. Please set HUGGINGFACE_TOKEN.",
+                    "chunks_found": len(similar_chunks)
+                }
+            
+            llm_service = LLMService(
+                huggingface_token=hf_token,
+                model_name=settings.LLM_MODEL if hasattr(settings, 'LLM_MODEL') else "meta-llama/Llama-2-7b-chat-hf"
+            )
+            answer = llm_service.generate_answer_with_context(
+                question=request.question,
+                context_chunks=similar_chunks,
+                max_length=512,
+                temperature=0.7
+            )
+            
+            logger.info("✅ Answer generated successfully (synchronous fallback)")
+            
+            # Get unique PDFs with their IDs for download links
+            pdf_doc_map = {}
+            for chunk in similar_chunks:
+                doc_name = chunk.get("document_name")
+                if doc_name and doc_name not in pdf_doc_map:
+                    # Get PDF ID from database
+                    pdf_id = await hasura_client.get_pdf_id_by_name(doc_name)
+                    if pdf_id:
+                        pdf_doc_map[doc_name] = pdf_id
+            
+            # Return answer with source information
+            logger.info("🤖 Answer from RAG (synchronous fallback)")
+            response_data = {
+                "success": True,
+                "question": request.question,
+                "answer": answer,
+                "source": "rag",
+                "data_source": "RAG_SYNC",
+                "chunks_used": len(similar_chunks),
+                "source_documents": [
+                    {
+                        "document": chunk.get("document_name"),
+                        "page": chunk.get("page_number"),
+                        "relevance_score": round(chunk.get("score", 0), 4),
+                        "pdf_id": pdf_doc_map.get(chunk.get("document_name"))
+                    } for chunk in similar_chunks
+                ]
+            }
+            
+            # Save question and answer to chat history
+            if actual_session_id and request.user_id:
+                try:
+                    message_id = f"msg_{uuid.uuid4().hex[:16]}"
+                    logger.info(f"💾 Saving RAG message (session={actual_session_id}, user={request.user_id})")
+                    await hasura_client.add_chat_message(
+                        message_id=message_id,
+                        session_id=actual_session_id,
+                        user_id=request.user_id,
+                        question=request.question,
+                        answer=answer,
+                        source="rag"
+                    )
+                    logger.info(f"✅ RAG message saved")
+                except Exception as e:
+                    logger.error(f"❌ Failed to save RAG chat message: {e}", exc_info=True)
+            else:
+                logger.warning(f"⚠️  Skipping RAG save - session_id={actual_session_id}, user_id={request.user_id}")
+            
+            return response_data
+        
     
     except Exception as e:
         logger.error(f"❌ Error processing question: {str(e)}", exc_info=True)
@@ -516,5 +599,81 @@ async def clear_faq_cache():
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to clear cache: {str(e)}"
+        )
+
+
+@router.get("/task/{task_id}", response_model=dict)
+async def get_task_result(task_id: str):
+    """
+    Poll for Celery task result (for async RAG answer generation)
+    
+    Args:
+        task_id (str): The Celery task ID returned from the chat endpoint
+    
+    Returns:
+        dict: Task status and result if available
+    """
+    try:
+        from celery.result import AsyncResult
+        from celery_config import app as celery_app
+        
+        logger.info(f"📋 Polling task result for task_id: {task_id}")
+        
+        # Get task result from Celery
+        task_result = AsyncResult(task_id, app=celery_app)
+        
+        if task_result.state == 'PENDING':
+            logger.info(f"⏳ Task {task_id} is still pending")
+            return {
+                "success": True,
+                "task_id": task_id,
+                "status": "pending",
+                "message": "Task is still being processed"
+            }
+        
+        elif task_result.state == 'SUCCESS':
+            logger.info(f"✅ Task {task_id} completed successfully")
+            result = task_result.result
+            return {
+                "success": True,
+                "task_id": task_id,
+                "status": "success",
+                "result": result,
+                "response_data": result.get('response_data') if isinstance(result, dict) else None
+            }
+        
+        elif task_result.state == 'FAILURE':
+            logger.error(f"❌ Task {task_id} failed")
+            return {
+                "success": False,
+                "task_id": task_id,
+                "status": "failure",
+                "error": str(task_result.info),
+                "message": "Task failed to complete"
+            }
+        
+        elif task_result.state == 'RETRY':
+            logger.warning(f"🔄 Task {task_id} is retrying")
+            return {
+                "success": True,
+                "task_id": task_id,
+                "status": "retry",
+                "message": "Task is retrying after a failure"
+            }
+        
+        else:
+            logger.info(f"ℹ️  Task {task_id} state: {task_result.state}")
+            return {
+                "success": True,
+                "task_id": task_id,
+                "status": task_result.state.lower(),
+                "message": f"Task is in {task_result.state} state"
+            }
+    
+    except Exception as e:
+        logger.error(f"❌ Error polling task result: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get task result: {str(e)}"
         )
 

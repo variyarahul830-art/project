@@ -4,9 +4,10 @@ from config import settings
 from database import engine, Base, ensure_pdf_schema
 from models import PDFDocument
 import logging
-# Configure logging
-logging.basicConfig(level=logging.INFO)
+
 logger = logging.getLogger(__name__)
+
+logger.info("Backend startup...")
 
 # Ensure schema drift is corrected before creating tables (handles missing minio_path column)
 ensure_pdf_schema()
@@ -37,6 +38,20 @@ app.include_router(pdf.router)
 app.include_router(auth.router)
 app.include_router(sessions.router)
 app.include_router(websocket_chat.router)
+
+logger.info("Backend ready")
+
+
+@app.on_event("startup")
+async def startup_event():
+    """Log startup completion"""
+    logger.info("Application started")
+
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Log shutdown"""
+    logger.info("Application shutdown")
 
 
 @app.get("/health")
